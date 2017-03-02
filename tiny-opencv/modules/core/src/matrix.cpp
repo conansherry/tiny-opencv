@@ -41,7 +41,6 @@
 //M*/
 
 #include "precomp.hpp"
-#include "opencl_kernels_core.hpp"
 
 #include "bufferpool.impl.hpp"
 
@@ -1277,15 +1276,6 @@ Mat _InputArray::getMat_(int i) const
         return Mat();
     }
 
-    if( k == CUDA_HOST_MEM )
-    {
-        CV_Assert( i < 0 );
-
-        const cuda::HostMem* cuda_mem = (const cuda::HostMem*)obj;
-
-        return cuda_mem->createMatHeader();
-    }
-
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
     return Mat();
 }
@@ -1470,52 +1460,6 @@ void _InputArray::getUMatVector(std::vector<UMat>& umv) const
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
 }
 
-cuda::GpuMat _InputArray::getGpuMat() const
-{
-    int k = kind();
-
-    if (k == CUDA_GPU_MAT)
-    {
-        const cuda::GpuMat* d_mat = (const cuda::GpuMat*)obj;
-        return *d_mat;
-    }
-
-    if (k == CUDA_HOST_MEM)
-    {
-        const cuda::HostMem* cuda_mem = (const cuda::HostMem*)obj;
-        return cuda_mem->createGpuMatHeader();
-    }
-
-    if (k == OPENGL_BUFFER)
-    {
-        CV_Error(cv::Error::StsNotImplemented, "You should explicitly call mapDevice/unmapDevice methods for ogl::Buffer object");
-        return cuda::GpuMat();
-    }
-
-    if (k == NONE)
-        return cuda::GpuMat();
-
-    CV_Error(cv::Error::StsNotImplemented, "getGpuMat is available only for cuda::GpuMat and cuda::HostMem");
-    return cuda::GpuMat();
-}
-void _InputArray::getGpuMatVector(std::vector<cuda::GpuMat>& gpumv) const
-{
-    int k = kind();
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        gpumv = *(std::vector<cuda::GpuMat>*)obj;
-    }
-}
-ogl::Buffer _InputArray::getOGlBuffer() const
-{
-    int k = kind();
-
-    CV_Assert(k == OPENGL_BUFFER);
-
-    const ogl::Buffer* gl_buf = (const ogl::Buffer*)obj;
-    return *gl_buf;
-}
-
 int _InputArray::kind() const
 {
     return flags & KIND_MASK;
@@ -1600,15 +1544,6 @@ Size _InputArray::size(int i) const
         return vv[i].size();
     }
 
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        const std::vector<cuda::GpuMat>& vv = *(const std::vector<cuda::GpuMat>*)obj;
-        if (i < 0)
-            return vv.empty() ? Size() : Size((int)vv.size(), 1);
-        CV_Assert(i < (int)vv.size());
-        return vv[i].size();
-    }
-
     if( k == STD_VECTOR_UMAT )
     {
         const std::vector<UMat>& vv = *(const std::vector<UMat>*)obj;
@@ -1617,27 +1552,6 @@ Size _InputArray::size(int i) const
         CV_Assert( i < (int)vv.size() );
 
         return vv[i].size();
-    }
-
-    if( k == OPENGL_BUFFER )
-    {
-        CV_Assert( i < 0 );
-        const ogl::Buffer* buf = (const ogl::Buffer*)obj;
-        return buf->size();
-    }
-
-    if( k == CUDA_GPU_MAT )
-    {
-        CV_Assert( i < 0 );
-        const cuda::GpuMat* d_mat = (const cuda::GpuMat*)obj;
-        return d_mat->size();
-    }
-
-    if( k == CUDA_HOST_MEM )
-    {
-        CV_Assert( i < 0 );
-        const cuda::HostMem* cuda_mem = (const cuda::HostMem*)obj;
-        return cuda_mem->size();
     }
 
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
@@ -1907,27 +1821,6 @@ int _InputArray::type(int i) const
         return vv[i >= 0 ? i : 0].type();
     }
 
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        const std::vector<cuda::GpuMat>& vv = *(const std::vector<cuda::GpuMat>*)obj;
-        if (vv.empty())
-        {
-            CV_Assert((flags & FIXED_TYPE) != 0);
-            return CV_MAT_TYPE(flags);
-        }
-        CV_Assert(i < (int)vv.size());
-        return vv[i >= 0 ? i : 0].type();
-    }
-
-    if( k == OPENGL_BUFFER )
-        return ((const ogl::Buffer*)obj)->type();
-
-    if( k == CUDA_GPU_MAT )
-        return ((const cuda::GpuMat*)obj)->type();
-
-    if( k == CUDA_HOST_MEM )
-        return ((const cuda::HostMem*)obj)->type();
-
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
     return 0;
 }
@@ -1991,21 +1884,6 @@ bool _InputArray::empty() const
         return vv.empty();
     }
 
-    if( k == OPENGL_BUFFER )
-        return ((const ogl::Buffer*)obj)->empty();
-
-    if( k == CUDA_GPU_MAT )
-        return ((const cuda::GpuMat*)obj)->empty();
-
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        const std::vector<cuda::GpuMat>& vv = *(const std::vector<cuda::GpuMat>*)obj;
-        return vv.empty();
-    }
-
-    if( k == CUDA_HOST_MEM )
-        return ((const cuda::HostMem*)obj)->empty();
-
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
     return true;
 }
@@ -2037,9 +1915,6 @@ bool _InputArray::isContinuous(int i) const
         CV_Assert((size_t)i < vv.size());
         return vv[i].isContinuous();
     }
-
-    if( k == CUDA_GPU_MAT )
-      return i < 0 ? ((const cuda::GpuMat*)obj)->isContinuous() : true;
 
     CV_Error(CV_StsNotImplemented, "Unknown/unsupported array type");
     return false;
@@ -2115,20 +1990,6 @@ size_t _InputArray::offset(int i) const
         return vv[i].offset;
     }
 
-    if( k == CUDA_GPU_MAT )
-    {
-        CV_Assert( i < 0 );
-        const cuda::GpuMat * const m = ((const cuda::GpuMat*)obj);
-        return (size_t)(m->data - m->datastart);
-    }
-
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        const std::vector<cuda::GpuMat>& vv = *(const std::vector<cuda::GpuMat>*)obj;
-        CV_Assert((size_t)i < vv.size());
-        return (size_t)(vv[i].data - vv[i].datastart);
-    }
-
     CV_Error(Error::StsNotImplemented, "");
     return 0;
 }
@@ -2165,18 +2026,6 @@ size_t _InputArray::step(int i) const
     if( k == STD_VECTOR_UMAT )
     {
         const std::vector<UMat>& vv = *(const std::vector<UMat>*)obj;
-        CV_Assert((size_t)i < vv.size());
-        return vv[i].step;
-    }
-
-    if( k == CUDA_GPU_MAT )
-    {
-        CV_Assert( i < 0 );
-        return ((const cuda::GpuMat*)obj)->step;
-    }
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        const std::vector<cuda::GpuMat>& vv = *(const std::vector<cuda::GpuMat>*)obj;
         CV_Assert((size_t)i < vv.size());
         return vv[i].step;
     }
@@ -2254,27 +2103,6 @@ void _OutputArray::create(Size _sz, int mtype, int i, bool allowTransposed, int 
         ((UMat*)obj)->create(_sz, mtype);
         return;
     }
-    if( k == CUDA_GPU_MAT && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((cuda::GpuMat*)obj)->size() == _sz);
-        CV_Assert(!fixedType() || ((cuda::GpuMat*)obj)->type() == mtype);
-        ((cuda::GpuMat*)obj)->create(_sz, mtype);
-        return;
-    }
-    if( k == OPENGL_BUFFER && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((ogl::Buffer*)obj)->size() == _sz);
-        CV_Assert(!fixedType() || ((ogl::Buffer*)obj)->type() == mtype);
-        ((ogl::Buffer*)obj)->create(_sz, mtype);
-        return;
-    }
-    if( k == CUDA_HOST_MEM && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((cuda::HostMem*)obj)->size() == _sz);
-        CV_Assert(!fixedType() || ((cuda::HostMem*)obj)->type() == mtype);
-        ((cuda::HostMem*)obj)->create(_sz, mtype);
-        return;
-    }
     int sizes[] = {_sz.height, _sz.width};
     create(2, sizes, mtype, i, allowTransposed, fixedDepthMask);
 }
@@ -2294,27 +2122,6 @@ void _OutputArray::create(int _rows, int _cols, int mtype, int i, bool allowTran
         CV_Assert(!fixedSize() || ((UMat*)obj)->size.operator()() == Size(_cols, _rows));
         CV_Assert(!fixedType() || ((UMat*)obj)->type() == mtype);
         ((UMat*)obj)->create(_rows, _cols, mtype);
-        return;
-    }
-    if( k == CUDA_GPU_MAT && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((cuda::GpuMat*)obj)->size() == Size(_cols, _rows));
-        CV_Assert(!fixedType() || ((cuda::GpuMat*)obj)->type() == mtype);
-        ((cuda::GpuMat*)obj)->create(_rows, _cols, mtype);
-        return;
-    }
-    if( k == OPENGL_BUFFER && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((ogl::Buffer*)obj)->size() == Size(_cols, _rows));
-        CV_Assert(!fixedType() || ((ogl::Buffer*)obj)->type() == mtype);
-        ((ogl::Buffer*)obj)->create(_rows, _cols, mtype);
-        return;
-    }
-    if( k == CUDA_HOST_MEM && i < 0 && !allowTransposed && fixedDepthMask == 0 )
-    {
-        CV_Assert(!fixedSize() || ((cuda::HostMem*)obj)->size() == Size(_cols, _rows));
-        CV_Assert(!fixedType() || ((cuda::HostMem*)obj)->type() == mtype);
-        ((cuda::HostMem*)obj)->create(_rows, _cols, mtype);
         return;
     }
     int sizes[] = {_rows, _cols};
@@ -2638,24 +2445,6 @@ void _OutputArray::release() const
         return;
     }
 
-    if( k == CUDA_GPU_MAT )
-    {
-        ((cuda::GpuMat*)obj)->release();
-        return;
-    }
-
-    if( k == CUDA_HOST_MEM )
-    {
-        ((cuda::HostMem*)obj)->release();
-        return;
-    }
-
-    if( k == OPENGL_BUFFER )
-    {
-        ((ogl::Buffer*)obj)->release();
-        return;
-    }
-
     if( k == NONE )
         return;
 
@@ -2680,11 +2469,6 @@ void _OutputArray::release() const
     if( k == STD_VECTOR_UMAT )
     {
         ((std::vector<UMat>*)obj)->clear();
-        return;
-    }
-    if (k == STD_VECTOR_CUDA_GPU_MAT)
-    {
-        ((std::vector<cuda::GpuMat>*)obj)->clear();
         return;
     }
     CV_Error(Error::StsNotImplemented, "Unknown/unsupported array type");
@@ -2743,33 +2527,6 @@ UMat& _OutputArray::getUMatRef(int i) const
     }
 }
 
-cuda::GpuMat& _OutputArray::getGpuMatRef() const
-{
-    int k = kind();
-    CV_Assert( k == CUDA_GPU_MAT );
-    return *(cuda::GpuMat*)obj;
-}
-std::vector<cuda::GpuMat>& _OutputArray::getGpuMatVecRef() const
-{
-    int k = kind();
-    CV_Assert(k == STD_VECTOR_CUDA_GPU_MAT);
-    return *(std::vector<cuda::GpuMat>*)obj;
-}
-
-ogl::Buffer& _OutputArray::getOGlBufferRef() const
-{
-    int k = kind();
-    CV_Assert( k == OPENGL_BUFFER );
-    return *(ogl::Buffer*)obj;
-}
-
-cuda::HostMem& _OutputArray::getHostMemRef() const
-{
-    int k = kind();
-    CV_Assert( k == CUDA_HOST_MEM );
-    return *(cuda::HostMem*)obj;
-}
-
 void _OutputArray::setTo(const _InputArray& arr, const _InputArray & mask) const
 {
     int k = kind();
@@ -2783,12 +2540,6 @@ void _OutputArray::setTo(const _InputArray& arr, const _InputArray & mask) const
     }
     else if( k == UMAT )
         ((UMat*)obj)->setTo(arr, mask);
-    else if( k == CUDA_GPU_MAT )
-    {
-        Mat value = arr.getMat();
-        CV_Assert( checkScalar(value, type(), arr.kind(), _InputArray::CUDA_GPU_MAT) );
-        ((cuda::GpuMat*)obj)->setTo(Scalar(Vec<double, 4>(value.ptr<double>())), mask);
-    }
     else
         CV_Error(Error::StsNotImplemented, "");
 }
@@ -2939,54 +2690,11 @@ void cv::vconcat(InputArray _src, OutputArray dst)
 
 //////////////////////////////////////// set identity ////////////////////////////////////////////
 
-#ifdef HAVE_OPENCL
-
-namespace cv {
-
-static bool ocl_setIdentity( InputOutputArray _m, const Scalar& s )
-{
-    int type = _m.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type), kercn = cn, rowsPerWI = 1;
-    int sctype = CV_MAKE_TYPE(depth, cn == 3 ? 4 : cn);
-    if (ocl::Device::getDefault().isIntel())
-    {
-        rowsPerWI = 4;
-        if (cn == 1)
-        {
-            kercn = std::min(ocl::predictOptimalVectorWidth(_m), 4);
-            if (kercn != 4)
-                kercn = 1;
-        }
-    }
-
-    ocl::Kernel k("setIdentity", ocl::core::set_identity_oclsrc,
-                  format("-D T=%s -D T1=%s -D cn=%d -D ST=%s -D kercn=%d -D rowsPerWI=%d",
-                         ocl::memopTypeToStr(CV_MAKE_TYPE(depth, kercn)),
-                         ocl::memopTypeToStr(depth), cn,
-                         ocl::memopTypeToStr(sctype),
-                         kercn, rowsPerWI));
-    if (k.empty())
-        return false;
-
-    UMat m = _m.getUMat();
-    k.args(ocl::KernelArg::WriteOnly(m, cn, kercn),
-           ocl::KernelArg::Constant(Mat(1, 1, sctype, s)));
-
-    size_t globalsize[2] = { (size_t)m.cols * cn / kercn, ((size_t)m.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-}
-
-#endif
-
 void cv::setIdentity( InputOutputArray _m, const Scalar& s )
 {
     CV_INSTRUMENT_REGION()
 
     CV_Assert( _m.dims() <= 2 );
-
-    CV_OCL_RUN(_m.isUMat(),
-               ocl_setIdentity(_m, s))
 
     Mat m = _m.getMat();
     int rows = m.rows, cols = m.cols, type = m.type();
@@ -3165,135 +2873,6 @@ static TransposeInplaceFunc transposeInplaceTab[] =
     transposeI_32sC2, 0, 0, 0, transposeI_32sC3, 0, 0, 0, transposeI_32sC4,
     0, 0, 0, 0, 0, 0, 0, transposeI_32sC6, 0, 0, 0, 0, 0, 0, 0, transposeI_32sC8
 };
-
-#ifdef HAVE_OPENCL
-
-static inline int divUp(int a, int b)
-{
-    return (a + b - 1) / b;
-}
-
-static bool ocl_transpose( InputArray _src, OutputArray _dst )
-{
-    const ocl::Device & dev = ocl::Device::getDefault();
-    const int TILE_DIM = 32, BLOCK_ROWS = 8;
-    int type = _src.type(), cn = CV_MAT_CN(type), depth = CV_MAT_DEPTH(type),
-        rowsPerWI = dev.isIntel() ? 4 : 1;
-
-    UMat src = _src.getUMat();
-    _dst.create(src.cols, src.rows, type);
-    UMat dst = _dst.getUMat();
-
-    String kernelName("transpose");
-    bool inplace = dst.u == src.u;
-
-    if (inplace)
-    {
-        CV_Assert(dst.cols == dst.rows);
-        kernelName += "_inplace";
-    }
-    else
-    {
-        // check required local memory size
-        size_t required_local_memory = (size_t) TILE_DIM*(TILE_DIM+1)*CV_ELEM_SIZE(type);
-        if (required_local_memory > ocl::Device::getDefault().localMemSize())
-            return false;
-    }
-
-    ocl::Kernel k(kernelName.c_str(), ocl::core::transpose_oclsrc,
-                  format("-D T=%s -D T1=%s -D cn=%d -D TILE_DIM=%d -D BLOCK_ROWS=%d -D rowsPerWI=%d%s",
-                         ocl::memopTypeToStr(type), ocl::memopTypeToStr(depth),
-                         cn, TILE_DIM, BLOCK_ROWS, rowsPerWI, inplace ? " -D INPLACE" : ""));
-    if (k.empty())
-        return false;
-
-    if (inplace)
-        k.args(ocl::KernelArg::ReadWriteNoSize(dst), dst.rows);
-    else
-        k.args(ocl::KernelArg::ReadOnly(src),
-               ocl::KernelArg::WriteOnlyNoSize(dst));
-
-    size_t localsize[2]  = { TILE_DIM, BLOCK_ROWS };
-    size_t globalsize[2] = { (size_t)src.cols, inplace ? ((size_t)src.rows + rowsPerWI - 1) / rowsPerWI : (divUp((size_t)src.rows, TILE_DIM) * BLOCK_ROWS) };
-
-    if (inplace && dev.isIntel())
-    {
-        localsize[0] = 16;
-        localsize[1] = dev.maxWorkGroupSize() / localsize[0];
-    }
-
-    return k.run(2, globalsize, localsize, false);
-}
-
-#endif
-
-#ifdef HAVE_IPP
-static bool ipp_transpose( Mat &src, Mat &dst )
-{
-    CV_INSTRUMENT_REGION_IPP()
-
-    int type = src.type();
-    typedef IppStatus (CV_STDCALL * IppiTranspose)(const void * pSrc, int srcStep, void * pDst, int dstStep, IppiSize roiSize);
-    typedef IppStatus (CV_STDCALL * IppiTransposeI)(const void * pSrcDst, int srcDstStep, IppiSize roiSize);
-    IppiTranspose ippiTranspose = 0;
-    IppiTransposeI ippiTranspose_I = 0;
-
-    if (dst.data == src.data && dst.cols == dst.rows)
-    {
-        CV_SUPPRESS_DEPRECATED_START
-        ippiTranspose_I =
-            type == CV_8UC1 ? (IppiTransposeI)ippiTranspose_8u_C1IR :
-            type == CV_8UC3 ? (IppiTransposeI)ippiTranspose_8u_C3IR :
-            type == CV_8UC4 ? (IppiTransposeI)ippiTranspose_8u_C4IR :
-            type == CV_16UC1 ? (IppiTransposeI)ippiTranspose_16u_C1IR :
-            type == CV_16UC3 ? (IppiTransposeI)ippiTranspose_16u_C3IR :
-            type == CV_16UC4 ? (IppiTransposeI)ippiTranspose_16u_C4IR :
-            type == CV_16SC1 ? (IppiTransposeI)ippiTranspose_16s_C1IR :
-            type == CV_16SC3 ? (IppiTransposeI)ippiTranspose_16s_C3IR :
-            type == CV_16SC4 ? (IppiTransposeI)ippiTranspose_16s_C4IR :
-            type == CV_32SC1 ? (IppiTransposeI)ippiTranspose_32s_C1IR :
-            type == CV_32SC3 ? (IppiTransposeI)ippiTranspose_32s_C3IR :
-            type == CV_32SC4 ? (IppiTransposeI)ippiTranspose_32s_C4IR :
-            type == CV_32FC1 ? (IppiTransposeI)ippiTranspose_32f_C1IR :
-            type == CV_32FC3 ? (IppiTransposeI)ippiTranspose_32f_C3IR :
-            type == CV_32FC4 ? (IppiTransposeI)ippiTranspose_32f_C4IR : 0;
-        CV_SUPPRESS_DEPRECATED_END
-    }
-    else
-    {
-        ippiTranspose =
-            type == CV_8UC1 ? (IppiTranspose)ippiTranspose_8u_C1R :
-            type == CV_8UC3 ? (IppiTranspose)ippiTranspose_8u_C3R :
-            type == CV_8UC4 ? (IppiTranspose)ippiTranspose_8u_C4R :
-            type == CV_16UC1 ? (IppiTranspose)ippiTranspose_16u_C1R :
-            type == CV_16UC3 ? (IppiTranspose)ippiTranspose_16u_C3R :
-            type == CV_16UC4 ? (IppiTranspose)ippiTranspose_16u_C4R :
-            type == CV_16SC1 ? (IppiTranspose)ippiTranspose_16s_C1R :
-            type == CV_16SC3 ? (IppiTranspose)ippiTranspose_16s_C3R :
-            type == CV_16SC4 ? (IppiTranspose)ippiTranspose_16s_C4R :
-            type == CV_32SC1 ? (IppiTranspose)ippiTranspose_32s_C1R :
-            type == CV_32SC3 ? (IppiTranspose)ippiTranspose_32s_C3R :
-            type == CV_32SC4 ? (IppiTranspose)ippiTranspose_32s_C4R :
-            type == CV_32FC1 ? (IppiTranspose)ippiTranspose_32f_C1R :
-            type == CV_32FC3 ? (IppiTranspose)ippiTranspose_32f_C3R :
-            type == CV_32FC4 ? (IppiTranspose)ippiTranspose_32f_C4R : 0;
-    }
-
-    IppiSize roiSize = { src.cols, src.rows };
-    if (ippiTranspose != 0)
-    {
-        if (CV_INSTRUMENT_FUN_IPP(ippiTranspose, src.ptr(), (int)src.step, dst.ptr(), (int)dst.step, roiSize) >= 0)
-            return true;
-    }
-    else if (ippiTranspose_I != 0)
-    {
-        if (CV_INSTRUMENT_FUN_IPP(ippiTranspose_I, dst.ptr(), (int)dst.step, roiSize) >= 0)
-            return true;
-    }
-    return false;
-}
-#endif
-
 }
 
 
@@ -3303,9 +2882,6 @@ void cv::transpose( InputArray _src, OutputArray _dst )
 
     int type = _src.type(), esz = CV_ELEM_SIZE(type);
     CV_Assert( _src.dims() <= 2 && esz <= 32 );
-
-    CV_OCL_RUN(_dst.isUMat(),
-               ocl_transpose(_src, _dst))
 
     Mat src = _src.getMat();
     if( src.empty() )
@@ -3517,81 +3093,6 @@ typedef void (*ReduceFunc)( const Mat& src, Mat& dst );
 #define reduceMinR32f reduceR_<float, float, OpMin<float> >
 #define reduceMinR64f reduceR_<double,double,OpMin<double> >
 
-#ifdef HAVE_IPP
-static inline bool ipp_reduceSumC_8u16u16s32f_64f(const cv::Mat& srcmat, cv::Mat& dstmat)
-{
-    int sstep = (int)srcmat.step, stype = srcmat.type(),
-            ddepth = dstmat.depth();
-
-    IppiSize roisize = { srcmat.size().width, 1 };
-
-    typedef IppStatus (CV_STDCALL * IppiSum)(const void * pSrc, int srcStep, IppiSize roiSize, Ipp64f* pSum);
-    typedef IppStatus (CV_STDCALL * IppiSumHint)(const void * pSrc, int srcStep, IppiSize roiSize, Ipp64f* pSum, IppHintAlgorithm hint);
-    IppiSum ippiSum = 0;
-    IppiSumHint ippiSumHint = 0;
-
-    if(ddepth == CV_64F)
-    {
-        ippiSum =
-            stype == CV_8UC1 ? (IppiSum)ippiSum_8u_C1R :
-            stype == CV_8UC3 ? (IppiSum)ippiSum_8u_C3R :
-            stype == CV_8UC4 ? (IppiSum)ippiSum_8u_C4R :
-            stype == CV_16UC1 ? (IppiSum)ippiSum_16u_C1R :
-            stype == CV_16UC3 ? (IppiSum)ippiSum_16u_C3R :
-            stype == CV_16UC4 ? (IppiSum)ippiSum_16u_C4R :
-            stype == CV_16SC1 ? (IppiSum)ippiSum_16s_C1R :
-            stype == CV_16SC3 ? (IppiSum)ippiSum_16s_C3R :
-            stype == CV_16SC4 ? (IppiSum)ippiSum_16s_C4R : 0;
-        ippiSumHint =
-            stype == CV_32FC1 ? (IppiSumHint)ippiSum_32f_C1R :
-            stype == CV_32FC3 ? (IppiSumHint)ippiSum_32f_C3R :
-            stype == CV_32FC4 ? (IppiSumHint)ippiSum_32f_C4R : 0;
-    }
-
-    if(ippiSum)
-    {
-        for(int y = 0; y < srcmat.size().height; y++)
-        {
-            if(CV_INSTRUMENT_FUN_IPP(ippiSum, srcmat.ptr(y), sstep, roisize, dstmat.ptr<Ipp64f>(y)) < 0)
-                return false;
-        }
-        return true;
-    }
-    else if(ippiSumHint)
-    {
-        for(int y = 0; y < srcmat.size().height; y++)
-        {
-            if(CV_INSTRUMENT_FUN_IPP(ippiSumHint, srcmat.ptr(y), sstep, roisize, dstmat.ptr<Ipp64f>(y), ippAlgHintAccurate) < 0)
-                return false;
-        }
-        return true;
-    }
-
-    return false;
-}
-
-static inline void reduceSumC_8u16u16s32f_64f(const cv::Mat& srcmat, cv::Mat& dstmat)
-{
-    CV_IPP_RUN_FAST(ipp_reduceSumC_8u16u16s32f_64f(srcmat, dstmat));
-
-    cv::ReduceFunc func = 0;
-
-    if(dstmat.depth() == CV_64F)
-    {
-        int sdepth = CV_MAT_DEPTH(srcmat.type());
-        func =
-            sdepth == CV_8U ? (cv::ReduceFunc)cv::reduceC_<uchar, double,   cv::OpAdd<double> > :
-            sdepth == CV_16U ? (cv::ReduceFunc)cv::reduceC_<ushort, double,   cv::OpAdd<double> > :
-            sdepth == CV_16S ? (cv::ReduceFunc)cv::reduceC_<short, double,   cv::OpAdd<double> > :
-            sdepth == CV_32F ? (cv::ReduceFunc)cv::reduceC_<float, double,   cv::OpAdd<double> > : 0;
-    }
-    CV_Assert(func);
-
-    func(srcmat, dstmat);
-}
-
-#endif
-
 #define reduceSumC8u32s  reduceC_<uchar, int,   OpAdd<int> >
 #define reduceSumC8u32f  reduceC_<uchar, float, OpAdd<int> >
 #define reduceSumC16u32f reduceC_<ushort,float, OpAdd<float> >
@@ -3599,175 +3100,22 @@ static inline void reduceSumC_8u16u16s32f_64f(const cv::Mat& srcmat, cv::Mat& ds
 #define reduceSumC32f32f reduceC_<float, float, OpAdd<float> >
 #define reduceSumC64f64f reduceC_<double,double,OpAdd<double> >
 
-#ifdef HAVE_IPP
-#define reduceSumC8u64f  reduceSumC_8u16u16s32f_64f
-#define reduceSumC16u64f reduceSumC_8u16u16s32f_64f
-#define reduceSumC16s64f reduceSumC_8u16u16s32f_64f
-#define reduceSumC32f64f reduceSumC_8u16u16s32f_64f
-#else
 #define reduceSumC8u64f  reduceC_<uchar, double,OpAdd<int> >
 #define reduceSumC16u64f reduceC_<ushort,double,OpAdd<double> >
 #define reduceSumC16s64f reduceC_<short, double,OpAdd<double> >
 #define reduceSumC32f64f reduceC_<float, double,OpAdd<double> >
-#endif
 
-#ifdef HAVE_IPP
-#define REDUCE_OP(favor, optype, type1, type2) \
-static inline bool ipp_reduce##optype##C##favor(const cv::Mat& srcmat, cv::Mat& dstmat) \
-{ \
-    if((srcmat.channels() == 1)) \
-    { \
-        int sstep = (int)srcmat.step; \
-        typedef Ipp##favor IppType; \
-        IppiSize roisize = ippiSize(srcmat.size().width, 1);\
-        for(int y = 0; y < srcmat.size().height; y++)\
-        {\
-            if(CV_INSTRUMENT_FUN_IPP(ippi##optype##_##favor##_C1R, srcmat.ptr<IppType>(y), sstep, roisize, dstmat.ptr<IppType>(y)) < 0)\
-                return false;\
-        }\
-        return true;\
-    }\
-    return false; \
-} \
-static inline void reduce##optype##C##favor(const cv::Mat& srcmat, cv::Mat& dstmat) \
-{ \
-    CV_IPP_RUN_FAST(ipp_reduce##optype##C##favor(srcmat, dstmat)); \
-    cv::reduceC_ < type1, type2, cv::Op##optype < type2 > >(srcmat, dstmat); \
-}
-#endif
-
-#ifdef HAVE_IPP
-REDUCE_OP(8u, Max, uchar, uchar)
-REDUCE_OP(16u, Max, ushort, ushort)
-REDUCE_OP(16s, Max, short, short)
-REDUCE_OP(32f, Max, float, float)
-#else
 #define reduceMaxC8u  reduceC_<uchar, uchar, OpMax<uchar> >
 #define reduceMaxC16u reduceC_<ushort,ushort,OpMax<ushort> >
 #define reduceMaxC16s reduceC_<short, short, OpMax<short> >
 #define reduceMaxC32f reduceC_<float, float, OpMax<float> >
-#endif
 #define reduceMaxC64f reduceC_<double,double,OpMax<double> >
 
-#ifdef HAVE_IPP
-REDUCE_OP(8u, Min, uchar, uchar)
-REDUCE_OP(16u, Min, ushort, ushort)
-REDUCE_OP(16s, Min, short, short)
-REDUCE_OP(32f, Min, float, float)
-#else
 #define reduceMinC8u  reduceC_<uchar, uchar, OpMin<uchar> >
 #define reduceMinC16u reduceC_<ushort,ushort,OpMin<ushort> >
 #define reduceMinC16s reduceC_<short, short, OpMin<short> >
 #define reduceMinC32f reduceC_<float, float, OpMin<float> >
-#endif
 #define reduceMinC64f reduceC_<double,double,OpMin<double> >
-
-#ifdef HAVE_OPENCL
-
-namespace cv {
-
-static bool ocl_reduce(InputArray _src, OutputArray _dst,
-                       int dim, int op, int op0, int stype, int dtype)
-{
-    const int min_opt_cols = 128, buf_cols = 32;
-    int sdepth = CV_MAT_DEPTH(stype), cn = CV_MAT_CN(stype),
-            ddepth = CV_MAT_DEPTH(dtype), ddepth0 = ddepth;
-    const ocl::Device &defDev = ocl::Device::getDefault();
-    bool doubleSupport = defDev.doubleFPConfig() > 0;
-
-    size_t wgs = defDev.maxWorkGroupSize();
-    bool useOptimized = 1 == dim && _src.cols() > min_opt_cols && (wgs >= buf_cols);
-
-    if (!doubleSupport && (sdepth == CV_64F || ddepth == CV_64F))
-        return false;
-
-    if (op == CV_REDUCE_AVG)
-    {
-        if (sdepth < CV_32S && ddepth < CV_32S)
-            ddepth = CV_32S;
-    }
-
-    const char * const ops[4] = { "OCL_CV_REDUCE_SUM", "OCL_CV_REDUCE_AVG",
-                                  "OCL_CV_REDUCE_MAX", "OCL_CV_REDUCE_MIN" };
-    int wdepth = std::max(ddepth, CV_32F);
-    if (useOptimized)
-    {
-        size_t tileHeight = (size_t)(wgs / buf_cols);
-        if (defDev.isIntel())
-        {
-            static const size_t maxItemInGroupCount = 16;
-            tileHeight = min(tileHeight, defDev.localMemSize() / buf_cols / CV_ELEM_SIZE(CV_MAKETYPE(wdepth, cn)) / maxItemInGroupCount);
-        }
-        char cvt[3][40];
-        cv::String build_opt = format("-D OP_REDUCE_PRE -D BUF_COLS=%d -D TILE_HEIGHT=%d -D %s -D dim=1"
-                                            " -D cn=%d -D ddepth=%d"
-                                            " -D srcT=%s -D bufT=%s -D dstT=%s"
-                                            " -D convertToWT=%s -D convertToBufT=%s -D convertToDT=%s%s",
-                                            buf_cols, tileHeight, ops[op], cn, ddepth,
-                                            ocl::typeToStr(sdepth),
-                                            ocl::typeToStr(ddepth),
-                                            ocl::typeToStr(ddepth0),
-                                            ocl::convertTypeStr(ddepth, wdepth, 1, cvt[0]),
-                                            ocl::convertTypeStr(sdepth, ddepth, 1, cvt[1]),
-                                            ocl::convertTypeStr(wdepth, ddepth0, 1, cvt[2]),
-                                            doubleSupport ? " -D DOUBLE_SUPPORT" : "");
-        ocl::Kernel k("reduce_horz_opt", ocl::core::reduce2_oclsrc, build_opt);
-        if (k.empty())
-            return false;
-        UMat src = _src.getUMat();
-        Size dsize(1, src.rows);
-        _dst.create(dsize, dtype);
-        UMat dst = _dst.getUMat();
-
-        if (op0 == CV_REDUCE_AVG)
-            k.args(ocl::KernelArg::ReadOnly(src),
-                      ocl::KernelArg::WriteOnlyNoSize(dst), 1.0f / src.cols);
-        else
-            k.args(ocl::KernelArg::ReadOnly(src),
-                      ocl::KernelArg::WriteOnlyNoSize(dst));
-
-        size_t localSize[2] = { (size_t)buf_cols, (size_t)tileHeight};
-        size_t globalSize[2] = { (size_t)buf_cols, (size_t)src.rows };
-        return k.run(2, globalSize, localSize, false);
-    }
-    else
-    {
-        char cvt[2][40];
-        cv::String build_opt = format("-D %s -D dim=%d -D cn=%d -D ddepth=%d"
-                                      " -D srcT=%s -D dstT=%s -D dstT0=%s -D convertToWT=%s"
-                                      " -D convertToDT=%s -D convertToDT0=%s%s",
-                                      ops[op], dim, cn, ddepth, ocl::typeToStr(useOptimized ? ddepth : sdepth),
-                                      ocl::typeToStr(ddepth), ocl::typeToStr(ddepth0),
-                                      ocl::convertTypeStr(ddepth, wdepth, 1, cvt[0]),
-                                      ocl::convertTypeStr(sdepth, ddepth, 1, cvt[0]),
-                                      ocl::convertTypeStr(wdepth, ddepth0, 1, cvt[1]),
-                                      doubleSupport ? " -D DOUBLE_SUPPORT" : "");
-
-        ocl::Kernel k("reduce", ocl::core::reduce2_oclsrc, build_opt);
-        if (k.empty())
-            return false;
-
-        UMat src = _src.getUMat();
-        Size dsize(dim == 0 ? src.cols : 1, dim == 0 ? 1 : src.rows);
-        _dst.create(dsize, dtype);
-        UMat dst = _dst.getUMat();
-
-        ocl::KernelArg srcarg = ocl::KernelArg::ReadOnly(src),
-                temparg = ocl::KernelArg::WriteOnlyNoSize(dst);
-
-        if (op0 == CV_REDUCE_AVG)
-            k.args(srcarg, temparg, 1.0f / (dim == 0 ? src.rows : src.cols));
-        else
-            k.args(srcarg, temparg);
-
-        size_t globalsize = std::max(dsize.width, dsize.height);
-        return k.run(1, &globalsize, NULL, false);
-    }
-}
-
-}
-
-#endif
 
 void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
 {
@@ -3784,9 +3132,6 @@ void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
     CV_Assert( cn == CV_MAT_CN(dtype) );
     CV_Assert( op == CV_REDUCE_SUM || op == CV_REDUCE_MAX ||
                op == CV_REDUCE_MIN || op == CV_REDUCE_AVG );
-
-    CV_OCL_RUN(_dst.isUMat(),
-               ocl_reduce(_src, _dst, dim, op, op0, stype, dtype))
 
     Mat src = _src.getMat();
     _dst.create(dim == 0 ? 1 : src.rows, dim == 0 ? src.cols : 1, dtype);
@@ -3924,50 +3269,6 @@ void cv::reduce(InputArray _src, OutputArray _dst, int dim, int op, int dtype)
 namespace cv
 {
 
-#ifdef HAVE_IPP
-#define USE_IPP_SORT
-
-typedef IppStatus (CV_STDCALL * IppSortFunc)(void *, int);
-typedef IppSortFunc IppFlipFunc;
-
-static IppSortFunc getSortFunc(int depth, bool sortDescending)
-{
-    if (!sortDescending)
-        return depth == CV_8U ? (IppSortFunc)ippsSortAscend_8u_I :
-#if IPP_DISABLE_BLOCK
-            depth == CV_16U ? (IppSortFunc)ippsSortAscend_16u_I :
-            depth == CV_16S ? (IppSortFunc)ippsSortAscend_16s_I :
-            depth == CV_32S ? (IppSortFunc)ippsSortAscend_32s_I :
-            depth == CV_32F ? (IppSortFunc)ippsSortAscend_32f_I :
-            depth == CV_64F ? (IppSortFunc)ippsSortAscend_64f_I :
-#endif
-            0;
-    else
-        return depth == CV_8U ? (IppSortFunc)ippsSortDescend_8u_I :
-#if IPP_DISABLE_BLOCK
-            depth == CV_16U ? (IppSortFunc)ippsSortDescend_16u_I :
-            depth == CV_16S ? (IppSortFunc)ippsSortDescend_16s_I :
-            depth == CV_32S ? (IppSortFunc)ippsSortDescend_32s_I :
-            depth == CV_32F ? (IppSortFunc)ippsSortDescend_32f_I :
-            depth == CV_64F ? (IppSortFunc)ippsSortDescend_64f_I :
-#endif
-            0;
-}
-
-static IppFlipFunc getFlipFunc(int depth)
-{
-    CV_SUPPRESS_DEPRECATED_START
-    return
-            depth == CV_8U || depth == CV_8S ? (IppFlipFunc)ippsFlip_8u_I :
-            depth == CV_16U || depth == CV_16S ? (IppFlipFunc)ippsFlip_16u_I :
-            depth == CV_32S || depth == CV_32F ? (IppFlipFunc)ippsFlip_32f_I :
-            depth == CV_64F ? (IppFlipFunc)ippsFlip_64f_I : 0;
-    CV_SUPPRESS_DEPRECATED_END
-}
-
-
-#endif
-
 template<typename T> static void sort_( const Mat& src, Mat& dst, int flags )
 {
     AutoBuffer<T> buf;
@@ -3985,17 +3286,6 @@ template<typename T> static void sort_( const Mat& src, Mat& dst, int flags )
         buf.allocate(len);
     }
     bptr = (T*)buf;
-
-#ifdef USE_IPP_SORT
-    int depth = src.depth();
-    IppSortFunc ippSortFunc = 0;
-    IppFlipFunc ippFlipFunc = 0;
-    CV_IPP_CHECK()
-    {
-        ippSortFunc = getSortFunc(depth, sortDescending);
-        ippFlipFunc = getFlipFunc(depth);
-    }
-#endif
 
     for( int i = 0; i < n; i++ )
     {
@@ -4016,41 +3306,16 @@ template<typename T> static void sort_( const Mat& src, Mat& dst, int flags )
                 ptr[j] = src.ptr<T>(j)[i];
         }
 
-#ifdef USE_IPP_SORT
-        if (!ippSortFunc || CV_INSTRUMENT_FUN_IPP(ippSortFunc, ptr, len) < 0)
-#endif
         {
-#ifdef USE_IPP_SORT
-            if (depth == CV_8U)
-                setIppErrorStatus();
-#endif
             std::sort( ptr, ptr + len );
             if( sortDescending )
             {
-#ifdef USE_IPP_SORT
-                if (!ippFlipFunc || CV_INSTRUMENT_FUN_IPP(ippFlipFunc, ptr, len) < 0)
-#endif
                 {
-#ifdef USE_IPP_SORT
-                    setIppErrorStatus();
-#endif
                     for( int j = 0; j < len/2; j++ )
                         std::swap(ptr[j], ptr[len-1-j]);
                 }
-#ifdef USE_IPP_SORT
-                else
-                {
-                    CV_IMPL_ADD(CV_IMPL_IPP);
-                }
-#endif
             }
         }
-#ifdef USE_IPP_SORT
-        else
-        {
-            CV_IMPL_ADD(CV_IMPL_IPP);
-        }
-#endif
 
         if( !sortRows )
             for( int j = 0; j < len; j++ )
@@ -4065,30 +3330,6 @@ public:
     bool operator()(int a, int b) const { return arr[a] < arr[b]; }
     const _Tp* arr;
 };
-
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-
-typedef IppStatus (CV_STDCALL *IppSortIndexFunc)(void *, int *, int);
-
-static IppSortIndexFunc getSortIndexFunc(int depth, bool sortDescending)
-{
-    if (!sortDescending)
-        return depth == CV_8U ? (IppSortIndexFunc)ippsSortIndexAscend_8u_I :
-            depth == CV_16U ? (IppSortIndexFunc)ippsSortIndexAscend_16u_I :
-            depth == CV_16S ? (IppSortIndexFunc)ippsSortIndexAscend_16s_I :
-            depth == CV_32S ? (IppSortIndexFunc)ippsSortIndexAscend_32s_I :
-            depth == CV_32F ? (IppSortIndexFunc)ippsSortIndexAscend_32f_I :
-            depth == CV_64F ? (IppSortIndexFunc)ippsSortIndexAscend_64f_I : 0;
-    else
-        return depth == CV_8U ? (IppSortIndexFunc)ippsSortIndexDescend_8u_I :
-            depth == CV_16U ? (IppSortIndexFunc)ippsSortIndexDescend_16u_I :
-            depth == CV_16S ? (IppSortIndexFunc)ippsSortIndexDescend_16s_I :
-            depth == CV_32S ? (IppSortIndexFunc)ippsSortIndexDescend_32s_I :
-            depth == CV_32F ? (IppSortIndexFunc)ippsSortIndexDescend_32f_I :
-            depth == CV_64F ? (IppSortIndexFunc)ippsSortIndexDescend_64f_I : 0;
-}
-
-#endif
 
 template<typename T> static void sortIdx_( const Mat& src, Mat& dst, int flags )
 {
@@ -4111,17 +3352,6 @@ template<typename T> static void sortIdx_( const Mat& src, Mat& dst, int flags )
     T* bptr = (T*)buf;
     int* _iptr = (int*)ibuf;
 
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-    int depth = src.depth();
-    IppSortIndexFunc ippFunc = 0;
-    IppFlipFunc ippFlipFunc = 0;
-    CV_IPP_CHECK()
-    {
-        ippFunc = getSortIndexFunc(depth, sortDescending);
-        ippFlipFunc = getFlipFunc(depth);
-    }
-#endif
-
     for( int i = 0; i < n; i++ )
     {
         T* ptr = bptr;
@@ -4140,40 +3370,16 @@ template<typename T> static void sortIdx_( const Mat& src, Mat& dst, int flags )
         for( int j = 0; j < len; j++ )
             iptr[j] = j;
 
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-        if (sortRows || !ippFunc || ippFunc(ptr, iptr, len) < 0)
-#endif
         {
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-            setIppErrorStatus();
-#endif
             std::sort( iptr, iptr + len, LessThanIdx<T>(ptr) );
             if( sortDescending )
             {
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-                if (!ippFlipFunc || ippFlipFunc(iptr, len) < 0)
-#endif
                 {
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-                    setIppErrorStatus();
-#endif
                     for( int j = 0; j < len/2; j++ )
                         std::swap(iptr[j], iptr[len-1-j]);
                 }
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-                else
-                {
-                    CV_IMPL_ADD(CV_IMPL_IPP);
-                }
-#endif
             }
         }
-#if defined USE_IPP_SORT && IPP_DISABLE_BLOCK
-        else
-        {
-            CV_IMPL_ADD(CV_IMPL_IPP);
-        }
-#endif
 
         if( !sortRows )
             for( int j = 0; j < len; j++ )

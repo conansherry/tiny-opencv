@@ -48,7 +48,6 @@
 // */
 
 #include "precomp.hpp"
-#include "opencl_kernels_core.hpp"
 
 namespace cv
 {
@@ -80,88 +79,6 @@ enum { OCL_OP_ADD=0, OCL_OP_SUB=1, OCL_OP_RSUB=2, OCL_OP_ABSDIFF=3, OCL_OP_MUL=4
        OCL_OP_AND=9, OCL_OP_OR=10, OCL_OP_XOR=11, OCL_OP_NOT=12, OCL_OP_MIN=13, OCL_OP_MAX=14,
        OCL_OP_RDIV_SCALE=15 };
 
-#ifdef HAVE_OPENCL
-
-static const char* oclop2str[] = { "OP_ADD", "OP_SUB", "OP_RSUB", "OP_ABSDIFF",
-    "OP_MUL", "OP_MUL_SCALE", "OP_DIV_SCALE", "OP_RECIP_SCALE",
-    "OP_ADDW", "OP_AND", "OP_OR", "OP_XOR", "OP_NOT", "OP_MIN", "OP_MAX", "OP_RDIV_SCALE", 0 };
-
-static bool ocl_binary_op(InputArray _src1, InputArray _src2, OutputArray _dst,
-                          InputArray _mask, bool bitwise, int oclop, bool haveScalar )
-{
-    bool haveMask = !_mask.empty();
-    int srctype = _src1.type();
-    int srcdepth = CV_MAT_DEPTH(srctype);
-    int cn = CV_MAT_CN(srctype);
-
-    const ocl::Device d = ocl::Device::getDefault();
-    bool doubleSupport = d.doubleFPConfig() > 0;
-    if( oclop < 0 || ((haveMask || haveScalar) && cn > 4) ||
-            (!doubleSupport && srcdepth == CV_64F && !bitwise))
-        return false;
-
-    char opts[1024];
-    int kercn = haveMask || haveScalar ? cn : ocl::predictOptimalVectorWidth(_src1, _src2, _dst);
-    int scalarcn = kercn == 3 ? 4 : kercn;
-    int rowsPerWI = d.isIntel() ? 4 : 1;
-
-    sprintf(opts, "-D %s%s -D %s -D dstT=%s%s -D dstT_C1=%s -D workST=%s -D cn=%d -D rowsPerWI=%d",
-            haveMask ? "MASK_" : "", haveScalar ? "UNARY_OP" : "BINARY_OP", oclop2str[oclop],
-            bitwise ? ocl::memopTypeToStr(CV_MAKETYPE(srcdepth, kercn)) :
-                ocl::typeToStr(CV_MAKETYPE(srcdepth, kercn)), doubleSupport ? " -D DOUBLE_SUPPORT" : "",
-            bitwise ? ocl::memopTypeToStr(CV_MAKETYPE(srcdepth, 1)) :
-                ocl::typeToStr(CV_MAKETYPE(srcdepth, 1)),
-            bitwise ? ocl::memopTypeToStr(CV_MAKETYPE(srcdepth, scalarcn)) :
-                ocl::typeToStr(CV_MAKETYPE(srcdepth, scalarcn)),
-            kercn, rowsPerWI);
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc, opts);
-    if (k.empty())
-        return false;
-
-    UMat src1 = _src1.getUMat(), src2;
-    UMat dst = _dst.getUMat(), mask = _mask.getUMat();
-
-    ocl::KernelArg src1arg = ocl::KernelArg::ReadOnlyNoSize(src1, cn, kercn);
-    ocl::KernelArg dstarg = haveMask ? ocl::KernelArg::ReadWrite(dst, cn, kercn) :
-                                       ocl::KernelArg::WriteOnly(dst, cn, kercn);
-    ocl::KernelArg maskarg = ocl::KernelArg::ReadOnlyNoSize(mask, 1);
-
-    if( haveScalar )
-    {
-        size_t esz = CV_ELEM_SIZE1(srctype)*scalarcn;
-        double buf[4] = {0,0,0,0};
-
-        if( oclop != OCL_OP_NOT )
-        {
-            Mat src2sc = _src2.getMat();
-            convertAndUnrollScalar(src2sc, srctype, (uchar*)buf, 1);
-        }
-
-        ocl::KernelArg scalararg = ocl::KernelArg(0, 0, 0, 0, buf, esz);
-
-        if( !haveMask )
-            k.args(src1arg, dstarg, scalararg);
-        else
-            k.args(src1arg, maskarg, dstarg, scalararg);
-    }
-    else
-    {
-        src2 = _src2.getUMat();
-        ocl::KernelArg src2arg = ocl::KernelArg::ReadOnlyNoSize(src2, cn, kercn);
-
-        if( !haveMask )
-            k.args(src1arg, src2arg, dstarg);
-        else
-            k.args(src1arg, src2arg, maskarg, dstarg);
-    }
-
-    size_t globalsize[] = { (size_t)src1.cols * cn / kercn, ((size_t)src1.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, 0, false);
-}
-
-#endif
-
 static void binary_op( InputArray _src1, InputArray _src2, OutputArray _dst,
                        InputArray _mask, const BinaryFuncC* tab,
                        bool bitwise, int oclop )
@@ -173,18 +90,12 @@ static void binary_op( InputArray _src1, InputArray _src2, OutputArray _dst,
     int dims1 = psrc1->dims(), dims2 = psrc2->dims();
     Size sz1 = dims1 <= 2 ? psrc1->size() : Size();
     Size sz2 = dims2 <= 2 ? psrc2->size() : Size();
-#ifdef HAVE_OPENCL
-    bool use_opencl = (kind1 == _InputArray::UMAT || kind2 == _InputArray::UMAT) &&
-            dims1 <= 2 && dims2 <= 2;
-#endif
     bool haveMask = !_mask.empty(), haveScalar = false;
     BinaryFuncC func;
 
     if( dims1 <= 2 && dims2 <= 2 && kind1 == kind2 && sz1 == sz2 && type1 == type2 && !haveMask )
     {
         _dst.create(sz1, type1);
-        CV_OCL_RUN(use_opencl,
-                   ocl_binary_op(*psrc1, *psrc2, _dst, _mask, bitwise, oclop, false))
 
         if( bitwise )
         {
@@ -251,10 +162,6 @@ static void binary_op( InputArray _src1, InputArray _src2, OutputArray _dst,
     // we have to clear the destination
     if( haveMask && reallocate )
         _dst.setTo(0.);
-
-    CV_OCL_RUN(use_opencl,
-               ocl_binary_op(*psrc1, *psrc2, _dst, _mask, bitwise, oclop, haveScalar))
-
 
     Mat src1 = psrc1->getMat(), src2 = psrc2->getMat();
     Mat dst = _dst.getMat(), mask = _mask.getMat();
@@ -472,129 +379,6 @@ static int actualScalarDepth(const double* data, int len)
         CV_32S;
 }
 
-#ifdef HAVE_OPENCL
-
-static bool ocl_arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
-                          InputArray _mask, int wtype,
-                          void* usrdata, int oclop,
-                          bool haveScalar )
-{
-    const ocl::Device d = ocl::Device::getDefault();
-    bool doubleSupport = d.doubleFPConfig() > 0;
-    int type1 = _src1.type(), depth1 = CV_MAT_DEPTH(type1), cn = CV_MAT_CN(type1);
-    bool haveMask = !_mask.empty();
-
-    if ( (haveMask || haveScalar) && cn > 4 )
-        return false;
-
-    int dtype = _dst.type(), ddepth = CV_MAT_DEPTH(dtype), wdepth = std::max(CV_32S, CV_MAT_DEPTH(wtype));
-    if (!doubleSupport)
-        wdepth = std::min(wdepth, CV_32F);
-
-    wtype = CV_MAKETYPE(wdepth, cn);
-    int type2 = haveScalar ? wtype : _src2.type(), depth2 = CV_MAT_DEPTH(type2);
-    if (!doubleSupport && (depth2 == CV_64F || depth1 == CV_64F))
-        return false;
-
-    int kercn = haveMask || haveScalar ? cn : ocl::predictOptimalVectorWidth(_src1, _src2, _dst);
-    int scalarcn = kercn == 3 ? 4 : kercn, rowsPerWI = d.isIntel() ? 4 : 1;
-
-    char cvtstr[4][32], opts[1024];
-    sprintf(opts, "-D %s%s -D %s -D srcT1=%s -D srcT1_C1=%s -D srcT2=%s -D srcT2_C1=%s "
-            "-D dstT=%s -D dstT_C1=%s -D workT=%s -D workST=%s -D scaleT=%s -D wdepth=%d -D convertToWT1=%s "
-            "-D convertToWT2=%s -D convertToDT=%s%s -D cn=%d -D rowsPerWI=%d -D convertFromU=%s",
-            (haveMask ? "MASK_" : ""), (haveScalar ? "UNARY_OP" : "BINARY_OP"),
-            oclop2str[oclop], ocl::typeToStr(CV_MAKETYPE(depth1, kercn)),
-            ocl::typeToStr(depth1), ocl::typeToStr(CV_MAKETYPE(depth2, kercn)),
-            ocl::typeToStr(depth2), ocl::typeToStr(CV_MAKETYPE(ddepth, kercn)),
-            ocl::typeToStr(ddepth), ocl::typeToStr(CV_MAKETYPE(wdepth, kercn)),
-            ocl::typeToStr(CV_MAKETYPE(wdepth, scalarcn)),
-            ocl::typeToStr(wdepth), wdepth,
-            ocl::convertTypeStr(depth1, wdepth, kercn, cvtstr[0]),
-            ocl::convertTypeStr(depth2, wdepth, kercn, cvtstr[1]),
-            ocl::convertTypeStr(wdepth, ddepth, kercn, cvtstr[2]),
-            doubleSupport ? " -D DOUBLE_SUPPORT" : "", kercn, rowsPerWI,
-            oclop == OCL_OP_ABSDIFF && wdepth == CV_32S && ddepth == wdepth ?
-            ocl::convertTypeStr(CV_8U, ddepth, kercn, cvtstr[3]) : "noconvert");
-
-    size_t usrdata_esz = CV_ELEM_SIZE(wdepth);
-    const uchar* usrdata_p = (const uchar*)usrdata;
-    const double* usrdata_d = (const double*)usrdata;
-    float usrdata_f[3];
-    int i, n = oclop == OCL_OP_MUL_SCALE || oclop == OCL_OP_DIV_SCALE ||
-        oclop == OCL_OP_RDIV_SCALE || oclop == OCL_OP_RECIP_SCALE ? 1 : oclop == OCL_OP_ADDW ? 3 : 0;
-    if( n > 0 && wdepth == CV_32F )
-    {
-        for( i = 0; i < n; i++ )
-            usrdata_f[i] = (float)usrdata_d[i];
-        usrdata_p = (const uchar*)usrdata_f;
-    }
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc, opts);
-    if (k.empty())
-        return false;
-
-    UMat src1 = _src1.getUMat(), src2;
-    UMat dst = _dst.getUMat(), mask = _mask.getUMat();
-
-    ocl::KernelArg src1arg = ocl::KernelArg::ReadOnlyNoSize(src1, cn, kercn);
-    ocl::KernelArg dstarg = haveMask ? ocl::KernelArg::ReadWrite(dst, cn, kercn) :
-                                       ocl::KernelArg::WriteOnly(dst, cn, kercn);
-    ocl::KernelArg maskarg = ocl::KernelArg::ReadOnlyNoSize(mask, 1);
-
-    if( haveScalar )
-    {
-        size_t esz = CV_ELEM_SIZE1(wtype)*scalarcn;
-        double buf[4]={0,0,0,0};
-        Mat src2sc = _src2.getMat();
-
-        if( !src2sc.empty() )
-            convertAndUnrollScalar(src2sc, wtype, (uchar*)buf, 1);
-        ocl::KernelArg scalararg = ocl::KernelArg(0, 0, 0, 0, buf, esz);
-
-        if( !haveMask )
-        {
-            if(n == 0)
-                k.args(src1arg, dstarg, scalararg);
-            else if(n == 1)
-                k.args(src1arg, dstarg, scalararg,
-                       ocl::KernelArg(0, 0, 0, 0, usrdata_p, usrdata_esz));
-            else
-                CV_Error(Error::StsNotImplemented, "unsupported number of extra parameters");
-        }
-        else
-            k.args(src1arg, maskarg, dstarg, scalararg);
-    }
-    else
-    {
-        src2 = _src2.getUMat();
-        ocl::KernelArg src2arg = ocl::KernelArg::ReadOnlyNoSize(src2, cn, kercn);
-
-        if( !haveMask )
-        {
-            if (n == 0)
-                k.args(src1arg, src2arg, dstarg);
-            else if (n == 1)
-                k.args(src1arg, src2arg, dstarg,
-                       ocl::KernelArg(0, 0, 0, 0, usrdata_p, usrdata_esz));
-            else if (n == 3)
-                k.args(src1arg, src2arg, dstarg,
-                       ocl::KernelArg(0, 0, 0, 0, usrdata_p, usrdata_esz),
-                       ocl::KernelArg(0, 0, 0, 0, usrdata_p + usrdata_esz, usrdata_esz),
-                       ocl::KernelArg(0, 0, 0, 0, usrdata_p + usrdata_esz*2, usrdata_esz));
-            else
-                CV_Error(Error::StsNotImplemented, "unsupported number of extra parameters");
-        }
-        else
-            k.args(src1arg, src2arg, maskarg, dstarg);
-    }
-
-    size_t globalsize[] = { (size_t)src1.cols * cn / kercn, ((size_t)src1.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
                       InputArray _mask, int dtype, BinaryFuncC* tab, bool muldiv=false,
                       void* usrdata=0, int oclop=-1 )
@@ -608,9 +392,6 @@ static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
     int wtype, dims1 = psrc1->dims(), dims2 = psrc2->dims();
     Size sz1 = dims1 <= 2 ? psrc1->size() : Size();
     Size sz2 = dims2 <= 2 ? psrc2->size() : Size();
-#ifdef HAVE_OPENCL
-    bool use_opencl = OCL_PERFORMANCE_CHECK(_dst.isUMat()) && dims1 <= 2 && dims2 <= 2;
-#endif
     bool src1Scalar = checkScalar(*psrc1, type2, kind1, kind2);
     bool src2Scalar = checkScalar(*psrc2, type1, kind2, kind1);
 
@@ -620,10 +401,6 @@ static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
         ((src1Scalar && src2Scalar) || (!src1Scalar && !src2Scalar)) )
     {
         _dst.createSameSize(*psrc1, type1);
-        CV_OCL_RUN(use_opencl,
-            ocl_arithm_op(*psrc1, *psrc2, _dst, _mask,
-                          (!usrdata ? type1 : std::max(depth1, CV_32F)),
-                          usrdata, oclop, false))
 
         Mat src1 = psrc1->getMat(), src2 = psrc2->getMat(), dst = _dst.getMat();
         Size sz = getContinuousSize(src1, src2, dst, src1.channels());
@@ -719,10 +496,6 @@ static void arithm_op(InputArray _src1, InputArray _src2, OutputArray _dst,
     _dst.createSameSize(*psrc1, dtype);
     if( reallocate )
         _dst.setTo(0.);
-
-    CV_OCL_RUN(use_opencl,
-               ocl_arithm_op(*psrc1, *psrc2, _dst, _mask, wtype,
-               usrdata, oclop, haveScalar))
 
     BinaryFunc cvtsrc1 = type1 == wtype ? 0 : getConvertFunc(type1, wtype);
     BinaryFunc cvtsrc2 = type2 == type1 ? cvtsrc1 : type2 == wtype ? 0 : getConvertFunc(type2, wtype);
@@ -931,59 +704,6 @@ void cv::subtract( InputArray _src1, InputArray _src2, OutputArray _dst,
 {
     CV_INSTRUMENT_REGION()
 
-#ifdef HAVE_TEGRA_OPTIMIZATION
-    if (tegra::useTegra())
-    {
-        int kind1 = _src1.kind(), kind2 = _src2.kind();
-        Mat src1 = _src1.getMat(), src2 = _src2.getMat();
-        bool src1Scalar = checkScalar(src1, _src2.type(), kind1, kind2);
-        bool src2Scalar = checkScalar(src2, _src1.type(), kind2, kind1);
-
-        if (!src1Scalar && !src2Scalar &&
-            src1.depth() == CV_8U && src2.type() == src1.type() &&
-            src1.dims == 2 && src2.size() == src1.size() &&
-            mask.empty())
-        {
-            if (dtype < 0)
-            {
-                if (_dst.fixedType())
-                {
-                    dtype = _dst.depth();
-                }
-                else
-                {
-                    dtype = src1.depth();
-                }
-            }
-
-            dtype = CV_MAT_DEPTH(dtype);
-
-            if (!_dst.fixedType() || dtype == _dst.depth())
-            {
-                _dst.create(src1.size(), CV_MAKE_TYPE(dtype, src1.channels()));
-
-                if (dtype == CV_16S)
-                {
-                    Mat dst = _dst.getMat();
-                    if(tegra::subtract_8u8u16s(src1, src2, dst))
-                        return;
-                }
-                else if (dtype == CV_32F)
-                {
-                    Mat dst = _dst.getMat();
-                    if(tegra::subtract_8u8u32f(src1, src2, dst))
-                        return;
-                }
-                else if (dtype == CV_8S)
-                {
-                    Mat dst = _dst.getMat();
-                    if(tegra::subtract_8u8u8s(src1, src2, dst))
-                        return;
-                }
-            }
-        }
-    }
-#endif
     arithm_op(_src1, _src2, _dst, mask, dtype, getSubTab(), false, 0, OCL_OP_SUB );
 }
 
@@ -1128,102 +848,6 @@ static double getMaxVal(int depth)
     return tab[depth];
 }
 
-#ifdef HAVE_OPENCL
-
-static bool ocl_compare(InputArray _src1, InputArray _src2, OutputArray _dst, int op, bool haveScalar)
-{
-    const ocl::Device& dev = ocl::Device::getDefault();
-    bool doubleSupport = dev.doubleFPConfig() > 0;
-    int type1 = _src1.type(), depth1 = CV_MAT_DEPTH(type1), cn = CV_MAT_CN(type1),
-            type2 = _src2.type(), depth2 = CV_MAT_DEPTH(type2);
-
-    if (!doubleSupport && depth1 == CV_64F)
-        return false;
-
-    if (!haveScalar && (!_src1.sameSize(_src2) || type1 != type2))
-            return false;
-
-    int kercn = haveScalar ? cn : ocl::predictOptimalVectorWidth(_src1, _src2, _dst), rowsPerWI = dev.isIntel() ? 4 : 1;
-    // Workaround for bug with "?:" operator in AMD OpenCL compiler
-    if (depth1 >= CV_16U)
-        kercn = 1;
-
-    int scalarcn = kercn == 3 ? 4 : kercn;
-    const char * const operationMap[] = { "==", ">", ">=", "<", "<=", "!=" };
-    char cvt[40];
-
-    String opts = format("-D %s -D srcT1=%s -D dstT=%s -D workT=srcT1 -D cn=%d"
-                         " -D convertToDT=%s -D OP_CMP -D CMP_OPERATOR=%s -D srcT1_C1=%s"
-                         " -D srcT2_C1=%s -D dstT_C1=%s -D workST=%s -D rowsPerWI=%d%s",
-                         haveScalar ? "UNARY_OP" : "BINARY_OP",
-                         ocl::typeToStr(CV_MAKE_TYPE(depth1, kercn)),
-                         ocl::typeToStr(CV_8UC(kercn)), kercn,
-                         ocl::convertTypeStr(depth1, CV_8U, kercn, cvt),
-                         operationMap[op], ocl::typeToStr(depth1),
-                         ocl::typeToStr(depth1), ocl::typeToStr(CV_8U),
-                         ocl::typeToStr(CV_MAKE_TYPE(depth1, scalarcn)), rowsPerWI,
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : "");
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc, opts);
-    if (k.empty())
-        return false;
-
-    UMat src1 = _src1.getUMat();
-    Size size = src1.size();
-    _dst.create(size, CV_8UC(cn));
-    UMat dst = _dst.getUMat();
-
-    if (haveScalar)
-    {
-        size_t esz = CV_ELEM_SIZE1(type1) * scalarcn;
-        double buf[4] = { 0, 0, 0, 0 };
-        Mat src2 = _src2.getMat();
-
-        if( depth1 > CV_32S )
-            convertAndUnrollScalar( src2, depth1, (uchar *)buf, kercn );
-        else
-        {
-            double fval = 0;
-            getConvertFunc(depth2, CV_64F)(src2.ptr(), 1, 0, 1, (uchar *)&fval, 1, Size(1, 1), 0);
-            if( fval < getMinVal(depth1) )
-                return dst.setTo(Scalar::all(op == CMP_GT || op == CMP_GE || op == CMP_NE ? 255 : 0)), true;
-
-            if( fval > getMaxVal(depth1) )
-                return dst.setTo(Scalar::all(op == CMP_LT || op == CMP_LE || op == CMP_NE ? 255 : 0)), true;
-
-            int ival = cvRound(fval);
-            if( fval != ival )
-            {
-                if( op == CMP_LT || op == CMP_GE )
-                    ival = cvCeil(fval);
-                else if( op == CMP_LE || op == CMP_GT )
-                    ival = cvFloor(fval);
-                else
-                    return dst.setTo(Scalar::all(op == CMP_NE ? 255 : 0)), true;
-            }
-            convertAndUnrollScalar(Mat(1, 1, CV_32S, &ival), depth1, (uchar *)buf, kercn);
-        }
-
-        ocl::KernelArg scalararg = ocl::KernelArg(0, 0, 0, 0, buf, esz);
-
-        k.args(ocl::KernelArg::ReadOnlyNoSize(src1, cn, kercn),
-               ocl::KernelArg::WriteOnly(dst, cn, kercn), scalararg);
-    }
-    else
-    {
-        UMat src2 = _src2.getUMat();
-
-        k.args(ocl::KernelArg::ReadOnlyNoSize(src1),
-               ocl::KernelArg::ReadOnlyNoSize(src2),
-               ocl::KernelArg::WriteOnly(dst, cn, kercn));
-    }
-
-    size_t globalsize[2] = { (size_t)dst.cols * cn / kercn, ((size_t)dst.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 }
 
 void cv::compare(InputArray _src1, InputArray _src2, OutputArray _dst, int op)
@@ -1253,9 +877,6 @@ void cv::compare(InputArray _src1, InputArray _src2, OutputArray _dst, int op)
                      "nor 'array op scalar', nor 'scalar op array'" );
         haveScalar = true;
     }
-
-    CV_OCL_RUN(_src1.dims() <= 2 && _src2.dims() <= 2 && OCL_PERFORMANCE_CHECK(_dst.isUMat()),
-               ocl_compare(_src1, _src2, _dst, op, haveScalar))
 
     int kind1 = _src1.kind(), kind2 = _src2.kind();
     Mat src1 = _src1.getMat(), src2 = _src2.getMat();
@@ -1365,175 +986,7 @@ struct InRange_SIMD
     }
 };
 
-#if CV_SSE2
-
-template <>
-struct InRange_SIMD<uchar>
-{
-    int operator () (const uchar * src1, const uchar * src2, const uchar * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_full = _mm_set1_epi8(-1), v_128 = _mm_set1_epi8(-128);
-
-            for ( ; x <= len - 16; x += 16 )
-            {
-                __m128i v_src = _mm_add_epi8(_mm_loadu_si128((const __m128i *)(src1 + x)), v_128);
-                __m128i v_mask1 = _mm_cmpgt_epi8(_mm_add_epi8(_mm_loadu_si128((const __m128i *)(src2 + x)), v_128), v_src);
-                __m128i v_mask2 = _mm_cmpgt_epi8(v_src, _mm_add_epi8(_mm_loadu_si128((const __m128i *)(src3 + x)), v_128));
-                _mm_storeu_si128((__m128i *)(dst + x), _mm_andnot_si128(_mm_or_si128(v_mask1, v_mask2), v_full));
-            }
-        }
-
-        return x;
-    }
-};
-
-template <>
-struct InRange_SIMD<schar>
-{
-    int operator () (const schar * src1, const schar * src2, const schar * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_full = _mm_set1_epi8(-1);
-
-            for ( ; x <= len - 16; x += 16 )
-            {
-                __m128i v_src = _mm_loadu_si128((const __m128i *)(src1 + x));
-                __m128i v_mask1 = _mm_cmpgt_epi8(_mm_loadu_si128((const __m128i *)(src2 + x)), v_src);
-                __m128i v_mask2 = _mm_cmpgt_epi8(v_src, _mm_loadu_si128((const __m128i *)(src3 + x)));
-                _mm_storeu_si128((__m128i *)(dst + x), _mm_andnot_si128(_mm_or_si128(v_mask1, v_mask2), v_full));
-            }
-        }
-
-        return x;
-    }
-};
-
-template <>
-struct InRange_SIMD<ushort>
-{
-    int operator () (const ushort * src1, const ushort * src2, const ushort * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_zero = _mm_setzero_si128(), v_full = _mm_set1_epi16(-1), v_32768 = _mm_set1_epi16(-32768);
-
-            for ( ; x <= len - 8; x += 8 )
-            {
-                __m128i v_src = _mm_add_epi16(_mm_loadu_si128((const __m128i *)(src1 + x)), v_32768);
-                __m128i v_mask1 = _mm_cmpgt_epi16(_mm_add_epi16(_mm_loadu_si128((const __m128i *)(src2 + x)), v_32768), v_src);
-                __m128i v_mask2 = _mm_cmpgt_epi16(v_src, _mm_add_epi16(_mm_loadu_si128((const __m128i *)(src3 + x)), v_32768));
-                __m128i v_res = _mm_andnot_si128(_mm_or_si128(v_mask1, v_mask2), v_full);
-                _mm_storel_epi64((__m128i *)(dst + x), _mm_packus_epi16(_mm_srli_epi16(v_res, 8), v_zero));
-            }
-        }
-
-        return x;
-    }
-};
-
-template <>
-struct InRange_SIMD<short>
-{
-    int operator () (const short * src1, const short * src2, const short * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_zero = _mm_setzero_si128(), v_full = _mm_set1_epi16(-1);
-
-            for ( ; x <= len - 8; x += 8 )
-            {
-                __m128i v_src = _mm_loadu_si128((const __m128i *)(src1 + x));
-                __m128i v_mask1 = _mm_cmpgt_epi16(_mm_loadu_si128((const __m128i *)(src2 + x)), v_src);
-                __m128i v_mask2 = _mm_cmpgt_epi16(v_src, _mm_loadu_si128((const __m128i *)(src3 + x)));
-                __m128i v_res = _mm_andnot_si128(_mm_or_si128(v_mask1, v_mask2), v_full);
-                _mm_storel_epi64((__m128i *)(dst + x), _mm_packus_epi16(_mm_srli_epi16(v_res, 8), v_zero));
-            }
-        }
-
-        return x;
-    }
-};
-
-template <>
-struct InRange_SIMD<int>
-{
-    int operator () (const int * src1, const int * src2, const int * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_zero = _mm_setzero_si128(), v_full = _mm_set1_epi32(-1);
-
-            for ( ; x <= len - 8; x += 8 )
-            {
-                __m128i v_src = _mm_loadu_si128((const __m128i *)(src1 + x));
-                __m128i v_res1 = _mm_or_si128(_mm_cmpgt_epi32(_mm_loadu_si128((const __m128i *)(src2 + x)), v_src),
-                    _mm_cmpgt_epi32(v_src, _mm_loadu_si128((const __m128i *)(src3 + x))));
-
-                v_src = _mm_loadu_si128((const __m128i *)(src1 + x + 4));
-                __m128i v_res2 = _mm_or_si128(_mm_cmpgt_epi32(_mm_loadu_si128((const __m128i *)(src2 + x + 4)), v_src),
-                    _mm_cmpgt_epi32(v_src, _mm_loadu_si128((const __m128i *)(src3 + x + 4))));
-
-                __m128i v_res = _mm_packs_epi32(_mm_srli_epi32(_mm_andnot_si128(v_res1, v_full), 16),
-                                                _mm_srli_epi32(_mm_andnot_si128(v_res2, v_full), 16));
-                _mm_storel_epi64((__m128i *)(dst + x), _mm_packus_epi16(v_res, v_zero));
-            }
-        }
-
-        return x;
-    }
-};
-
-template <>
-struct InRange_SIMD<float>
-{
-    int operator () (const float * src1, const float * src2, const float * src3,
-                     uchar * dst, int len) const
-    {
-        int x = 0;
-
-        if (USE_SSE2)
-        {
-            __m128i v_zero = _mm_setzero_si128();
-
-            for ( ; x <= len - 8; x += 8 )
-            {
-                __m128 v_src = _mm_loadu_ps(src1 + x);
-                __m128 v_res1 = _mm_and_ps(_mm_cmple_ps(_mm_loadu_ps(src2 + x), v_src),
-                    _mm_cmple_ps(v_src, _mm_loadu_ps(src3 + x)));
-
-                v_src = _mm_loadu_ps(src1 + x + 4);
-                __m128 v_res2 = _mm_and_ps(_mm_cmple_ps(_mm_loadu_ps(src2 + x + 4), v_src),
-                    _mm_cmple_ps(v_src, _mm_loadu_ps(src3 + x + 4)));
-
-                __m128i v_res1i = _mm_cvtps_epi32(v_res1), v_res2i = _mm_cvtps_epi32(v_res2);
-                __m128i v_res = _mm_packs_epi32(_mm_srli_epi32(v_res1i, 16), _mm_srli_epi32(v_res2i, 16));
-                _mm_storel_epi64((__m128i *)(dst + x), _mm_packus_epi16(v_res, v_zero));
-            }
-        }
-
-        return x;
-    }
-};
-
-#elif CV_NEON
+#if CV_NEON
 
 template <>
 struct InRange_SIMD<uchar>
@@ -1801,135 +1254,12 @@ static InRangeFunc getInRangeFunc(int depth)
 
     return inRangeTab[depth];
 }
-
-#ifdef HAVE_OPENCL
-
-static bool ocl_inRange( InputArray _src, InputArray _lowerb,
-                         InputArray _upperb, OutputArray _dst )
-{
-    const ocl::Device & d = ocl::Device::getDefault();
-    int skind = _src.kind(), lkind = _lowerb.kind(), ukind = _upperb.kind();
-    Size ssize = _src.size(), lsize = _lowerb.size(), usize = _upperb.size();
-    int stype = _src.type(), ltype = _lowerb.type(), utype = _upperb.type();
-    int sdepth = CV_MAT_DEPTH(stype), ldepth = CV_MAT_DEPTH(ltype), udepth = CV_MAT_DEPTH(utype);
-    int cn = CV_MAT_CN(stype), rowsPerWI = d.isIntel() ? 4 : 1;
-    bool lbScalar = false, ubScalar = false;
-
-    if( (lkind == _InputArray::MATX && skind != _InputArray::MATX) ||
-        ssize != lsize || stype != ltype )
-    {
-        if( !checkScalar(_lowerb, stype, lkind, skind) )
-            CV_Error( CV_StsUnmatchedSizes,
-                     "The lower bounary is neither an array of the same size and same type as src, nor a scalar");
-        lbScalar = true;
-    }
-
-    if( (ukind == _InputArray::MATX && skind != _InputArray::MATX) ||
-        ssize != usize || stype != utype )
-    {
-        if( !checkScalar(_upperb, stype, ukind, skind) )
-            CV_Error( CV_StsUnmatchedSizes,
-                     "The upper bounary is neither an array of the same size and same type as src, nor a scalar");
-        ubScalar = true;
-    }
-
-    if (lbScalar != ubScalar)
-        return false;
-
-    bool doubleSupport = d.doubleFPConfig() > 0,
-            haveScalar = lbScalar && ubScalar;
-
-    if ( (!doubleSupport && sdepth == CV_64F) ||
-         (!haveScalar && (sdepth != ldepth || sdepth != udepth)) )
-        return false;
-
-    int kercn = haveScalar ? cn : std::max(std::min(ocl::predictOptimalVectorWidth(_src, _lowerb, _upperb, _dst), 4), cn);
-    if (kercn % cn != 0)
-        kercn = cn;
-    int colsPerWI = kercn / cn;
-    String opts = format("%s-D cn=%d -D srcT=%s -D srcT1=%s -D dstT=%s -D kercn=%d -D depth=%d%s -D colsPerWI=%d",
-                           haveScalar ? "-D HAVE_SCALAR " : "", cn, ocl::typeToStr(CV_MAKE_TYPE(sdepth, kercn)),
-                           ocl::typeToStr(sdepth), ocl::typeToStr(CV_8UC(colsPerWI)), kercn, sdepth,
-                           doubleSupport ? " -D DOUBLE_SUPPORT" : "", colsPerWI);
-
-    ocl::Kernel ker("inrange", ocl::core::inrange_oclsrc, opts);
-    if (ker.empty())
-        return false;
-
-    _dst.create(ssize, CV_8UC1);
-    UMat src = _src.getUMat(), dst = _dst.getUMat(), lscalaru, uscalaru;
-    Mat lscalar, uscalar;
-
-    if (lbScalar && ubScalar)
-    {
-        lscalar = _lowerb.getMat();
-        uscalar = _upperb.getMat();
-
-        size_t esz = src.elemSize();
-        size_t blocksize = 36;
-
-        AutoBuffer<uchar> _buf(blocksize*(((int)lbScalar + (int)ubScalar)*esz + cn) + 2*cn*sizeof(int) + 128);
-        uchar *buf = alignPtr(_buf + blocksize*cn, 16);
-
-        if( ldepth != sdepth && sdepth < CV_32S )
-        {
-            int* ilbuf = (int*)alignPtr(buf + blocksize*esz, 16);
-            int* iubuf = ilbuf + cn;
-
-            BinaryFunc sccvtfunc = getConvertFunc(ldepth, CV_32S);
-            sccvtfunc(lscalar.ptr(), 1, 0, 1, (uchar*)ilbuf, 1, Size(cn, 1), 0);
-            sccvtfunc(uscalar.ptr(), 1, 0, 1, (uchar*)iubuf, 1, Size(cn, 1), 0);
-            int minval = cvRound(getMinVal(sdepth)), maxval = cvRound(getMaxVal(sdepth));
-
-            for( int k = 0; k < cn; k++ )
-            {
-                if( ilbuf[k] > iubuf[k] || ilbuf[k] > maxval || iubuf[k] < minval )
-                    ilbuf[k] = minval+1, iubuf[k] = minval;
-            }
-            lscalar = Mat(cn, 1, CV_32S, ilbuf);
-            uscalar = Mat(cn, 1, CV_32S, iubuf);
-        }
-
-        lscalar.convertTo(lscalar, stype);
-        uscalar.convertTo(uscalar, stype);
-    }
-    else
-    {
-        lscalaru = _lowerb.getUMat();
-        uscalaru = _upperb.getUMat();
-    }
-
-    ocl::KernelArg srcarg = ocl::KernelArg::ReadOnlyNoSize(src),
-            dstarg = ocl::KernelArg::WriteOnly(dst, 1, colsPerWI);
-
-    if (haveScalar)
-    {
-        lscalar.copyTo(lscalaru);
-        uscalar.copyTo(uscalaru);
-
-        ker.args(srcarg, dstarg, ocl::KernelArg::PtrReadOnly(lscalaru),
-               ocl::KernelArg::PtrReadOnly(uscalaru), rowsPerWI);
-    }
-    else
-        ker.args(srcarg, dstarg, ocl::KernelArg::ReadOnlyNoSize(lscalaru),
-               ocl::KernelArg::ReadOnlyNoSize(uscalaru), rowsPerWI);
-
-    size_t globalsize[2] = { (size_t)ssize.width / colsPerWI, ((size_t)ssize.height + rowsPerWI - 1) / rowsPerWI };
-    return ker.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 }
 
 void cv::inRange(InputArray _src, InputArray _lowerb,
                  InputArray _upperb, OutputArray _dst)
 {
     CV_INSTRUMENT_REGION()
-
-    CV_OCL_RUN(_src.dims() <= 2 && _lowerb.dims() <= 2 &&
-               _upperb.dims() <= 2 && OCL_PERFORMANCE_CHECK(_dst.isUMat()),
-               ocl_inRange(_src, _lowerb, _upperb, _dst))
 
     int skind = _src.kind(), lkind = _lowerb.kind(), ukind = _upperb.kind();
     Mat src = _src.getMat(), lb = _lowerb.getMat(), ub = _upperb.getMat();
@@ -2302,66 +1632,10 @@ namespace cv { namespace hal {
 
 //=======================================
 
-#if (ARITHM_USE_IPP == 1)
-static inline void fixSteps(int width, int height, size_t elemSize, size_t& step1, size_t& step2, size_t& step)
-{
-    if( height == 1 )
-        step1 = step2 = step = width*elemSize;
-}
-#define CALL_IPP_BIN_E_12(fun) \
-    CV_IPP_CHECK() \
-    { \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-        if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, src2, (int)step2, dst, (int)step, ippiSize(width, height), 0)) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-
-#define CALL_IPP_BIN_E_21(fun) \
-    CV_IPP_CHECK() \
-    { \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-        if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src2, (int)step2, src1, (int)step1, dst, (int)step, ippiSize(width, height), 0)) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-
-#define CALL_IPP_BIN_12(fun) \
-    CV_IPP_CHECK() \
-    { \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-        if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, src2, (int)step2, dst, (int)step, ippiSize(width, height))) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-
-#define CALL_IPP_BIN_21(fun) \
-    CV_IPP_CHECK() \
-    { \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-        if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src2, (int)step2, src1, (int)step1, dst, (int)step, ippiSize(width, height))) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-
-#else
 #define CALL_IPP_BIN_E_12(fun)
 #define CALL_IPP_BIN_E_21(fun)
 #define CALL_IPP_BIN_12(fun)
 #define CALL_IPP_BIN_21(fun)
-#endif
 
 
 //=======================================
@@ -2494,33 +1768,7 @@ void sub64f( const double* src1, size_t step1,
 
 //=======================================
 
-#if (ARITHM_USE_IPP == 1)
-#define CALL_IPP_MIN_MAX(fun, type) \
-    CV_IPP_CHECK() \
-    { \
-        type* s1 = (type*)src1; \
-        type* s2 = (type*)src2; \
-        type* d  = dst; \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-        int i = 0; \
-        for(; i < height; i++) \
-        { \
-            if (0 > CV_INSTRUMENT_FUN_IPP(fun, s1, s2, d, width)) \
-                break; \
-            s1 = (type*)((uchar*)s1 + step1); \
-            s2 = (type*)((uchar*)s2 + step2); \
-            d  = (type*)((uchar*)d + step); \
-        } \
-        if (i == height) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-#else
 #define CALL_IPP_MIN_MAX(fun, type)
-#endif
 
 //=======================================
 // Max
@@ -2717,21 +1965,7 @@ void absdiff64f( const double* src1, size_t step1,
 // Logical
 //=======================================
 
-#if (ARITHM_USE_IPP == 1)
-#define CALL_IPP_UN(fun) \
-    CV_IPP_CHECK() \
-    { \
-        fixSteps(width, height, sizeof(dst[0]), step1, step2, step); (void)src2; \
-        if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, dst, (int)step, ippiSize(width, height))) \
-        { \
-            CV_IMPL_ADD(CV_IMPL_IPP); \
-            return; \
-        } \
-        setIppErrorStatus(); \
-    }
-#else
 #define CALL_IPP_UN(fun)
-#endif
 
 void and8u( const uchar* src1, size_t step1,
                    const uchar* src2, size_t step2,
@@ -2770,35 +2004,7 @@ void not8u( const uchar* src1, size_t step1,
 }
 
 //=======================================
-
-#if ARITHM_USE_IPP
-inline static IppCmpOp convert_cmp(int _cmpop)
-{
-    return _cmpop == CMP_EQ ? ippCmpEq :
-        _cmpop == CMP_GT ? ippCmpGreater :
-        _cmpop == CMP_GE ? ippCmpGreaterEq :
-        _cmpop == CMP_LT ? ippCmpLess :
-        _cmpop == CMP_LE ? ippCmpLessEq :
-        (IppCmpOp)-1;
-}
-#define CALL_IPP_CMP(fun) \
-    CV_IPP_CHECK() \
-    { \
-        IppCmpOp op = convert_cmp(*(int *)_cmpop); \
-        if( op  >= 0 ) \
-        { \
-            fixSteps(width, height, sizeof(dst[0]), step1, step2, step); \
-            if (0 <= CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, src2, (int)step2, dst, (int)step, ippiSize(width, height), op)) \
-            { \
-                CV_IMPL_ADD(CV_IMPL_IPP); \
-                return; \
-            } \
-            setIppErrorStatus(); \
-        } \
-    }
-#else
 #define CALL_IPP_CMP(fun)
-#endif
 
 //=======================================
 // Compare
@@ -2826,25 +2032,7 @@ void cmp8u(const uchar* src1, size_t step1, const uchar* src2, size_t step2,
         for( ; height--; src1 += step1, src2 += step2, dst += step )
         {
             int x =0;
-            #if CV_SSE2
-            if( USE_SSE2 )
-            {
-                __m128i m128 = code == CMP_GT ? _mm_setzero_si128() : _mm_set1_epi8 (-1);
-                __m128i c128 = _mm_set1_epi8 (-128);
-                for( ; x <= width - 16; x += 16 )
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    // no simd for 8u comparison, that's why we need the trick
-                    r00 = _mm_sub_epi8(r00,c128);
-                    r10 = _mm_sub_epi8(r10,c128);
-
-                    r00 =_mm_xor_si128(_mm_cmpgt_epi8(r00, r10), m128);
-                    _mm_storeu_si128((__m128i*)(dst + x),r00);
-
-                }
-            }
-            #elif CV_NEON
+            #if CV_NEON
             uint8x16_t mask = code == CMP_GT ? vdupq_n_u8(0) : vdupq_n_u8(255);
 
             for( ; x <= width - 16; x += 16 )
@@ -2865,19 +2053,7 @@ void cmp8u(const uchar* src1, size_t step1, const uchar* src2, size_t step2,
         for( ; height--; src1 += step1, src2 += step2, dst += step )
         {
             int x = 0;
-            #if CV_SSE2
-            if( USE_SSE2 )
-            {
-                __m128i m128 =  code == CMP_EQ ? _mm_setzero_si128() : _mm_set1_epi8 (-1);
-                for( ; x <= width - 16; x += 16 )
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    r00 = _mm_xor_si128 ( _mm_cmpeq_epi8 (r00, r10), m128);
-                    _mm_storeu_si128((__m128i*)(dst + x), r00);
-                }
-            }
-            #elif CV_NEON
+            #if CV_NEON
             uint8x16_t mask = code == CMP_EQ ? vdupq_n_u8(0) : vdupq_n_u8(255);
 
             for( ; x <= width - 16; x += 16 )
@@ -2929,33 +2105,7 @@ void cmp16s(const short* src1, size_t step1, const short* src2, size_t step2,
         for( ; height--; src1 += step1, src2 += step2, dst += step )
         {
             int x =0;
-            #if CV_SSE2
-            if( USE_SSE2)
-            {
-                __m128i m128 =  code == CMP_GT ? _mm_setzero_si128() : _mm_set1_epi16 (-1);
-                for( ; x <= width - 16; x += 16 )
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    r00 = _mm_xor_si128 ( _mm_cmpgt_epi16 (r00, r10), m128);
-                    __m128i r01 = _mm_loadu_si128((const __m128i*)(src1 + x + 8));
-                    __m128i r11 = _mm_loadu_si128((const __m128i*)(src2 + x + 8));
-                    r01 = _mm_xor_si128 ( _mm_cmpgt_epi16 (r01, r11), m128);
-                    r11 = _mm_packs_epi16(r00, r01);
-                    _mm_storeu_si128((__m128i*)(dst + x), r11);
-                }
-                if( x <= width-8)
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    r00 = _mm_xor_si128 ( _mm_cmpgt_epi16 (r00, r10), m128);
-                    r10 = _mm_packs_epi16(r00, r00);
-                    _mm_storel_epi64((__m128i*)(dst + x), r10);
-
-                    x += 8;
-                }
-            }
-            #elif CV_NEON
+            #if CV_NEON
             uint8x16_t mask = code == CMP_GT ? vdupq_n_u8(0) : vdupq_n_u8(255);
 
             for( ; x <= width - 16; x += 16 )
@@ -2983,33 +2133,7 @@ void cmp16s(const short* src1, size_t step1, const short* src2, size_t step2,
         for( ; height--; src1 += step1, src2 += step2, dst += step )
         {
             int x = 0;
-            #if CV_SSE2
-            if( USE_SSE2 )
-            {
-                __m128i m128 =  code == CMP_EQ ? _mm_setzero_si128() : _mm_set1_epi16 (-1);
-                for( ; x <= width - 16; x += 16 )
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    r00 = _mm_xor_si128 ( _mm_cmpeq_epi16 (r00, r10), m128);
-                    __m128i r01 = _mm_loadu_si128((const __m128i*)(src1 + x + 8));
-                    __m128i r11 = _mm_loadu_si128((const __m128i*)(src2 + x + 8));
-                    r01 = _mm_xor_si128 ( _mm_cmpeq_epi16 (r01, r11), m128);
-                    r11 = _mm_packs_epi16(r00, r01);
-                    _mm_storeu_si128((__m128i*)(dst + x), r11);
-                }
-                if( x <= width - 8)
-                {
-                    __m128i r00 = _mm_loadu_si128((const __m128i*)(src1 + x));
-                    __m128i r10 = _mm_loadu_si128((const __m128i*)(src2 + x));
-                    r00 = _mm_xor_si128 ( _mm_cmpeq_epi16 (r00, r10), m128);
-                    r10 = _mm_packs_epi16(r00, r00);
-                    _mm_storel_epi64((__m128i*)(dst + x), r10);
-
-                    x += 8;
-                }
-            }
-            #elif CV_NEON
+            #if CV_NEON
             uint8x16_t mask = code == CMP_EQ ? vdupq_n_u8(0) : vdupq_n_u8(255);
 
             for( ; x <= width - 16; x += 16 )
@@ -3054,40 +2178,8 @@ void cmp64f(const double* src1, size_t step1, const double* src2, size_t step2,
 }
 
 //=======================================
-
-#if defined HAVE_IPP
-#define CALL_IPP_MUL(fun) \
-    CV_IPP_CHECK() \
-    { \
-        if (std::fabs(fscale - 1) <= FLT_EPSILON) \
-        { \
-            if (CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, src2, (int)step2, dst, (int)step, ippiSize(width, height), 0) >= 0) \
-            { \
-                CV_IMPL_ADD(CV_IMPL_IPP); \
-                return; \
-            } \
-            setIppErrorStatus(); \
-        } \
-    }
-
-#define CALL_IPP_MUL_2(fun) \
-    CV_IPP_CHECK() \
-    { \
-        if (std::fabs(fscale - 1) <= FLT_EPSILON) \
-        { \
-            if (CV_INSTRUMENT_FUN_IPP(fun, src1, (int)step1, src2, (int)step2, dst, (int)step, ippiSize(width, height)) >= 0) \
-            { \
-                CV_IMPL_ADD(CV_IMPL_IPP); \
-                return; \
-            } \
-            setIppErrorStatus(); \
-        } \
-    }
-
-#else
 #define CALL_IPP_MUL(fun)
 #define CALL_IPP_MUL_2(fun)
-#endif
 
 //=======================================
 // Multilpy
@@ -3277,33 +2369,7 @@ addWeighted8u( const uchar* src1, size_t step1,
     {
         int x = 0;
 
-#if CV_SSE2
-        if( USE_SSE2 )
-        {
-            __m128 a4 = _mm_set1_ps(alpha), b4 = _mm_set1_ps(beta), g4 = _mm_set1_ps(gamma);
-            __m128i z = _mm_setzero_si128();
-
-            for( ; x <= width - 8; x += 8 )
-            {
-                __m128i u = _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i*)(src1 + x)), z);
-                __m128i v = _mm_unpacklo_epi8(_mm_loadl_epi64((const __m128i*)(src2 + x)), z);
-
-                __m128 u0 = _mm_cvtepi32_ps(_mm_unpacklo_epi16(u, z));
-                __m128 u1 = _mm_cvtepi32_ps(_mm_unpackhi_epi16(u, z));
-                __m128 v0 = _mm_cvtepi32_ps(_mm_unpacklo_epi16(v, z));
-                __m128 v1 = _mm_cvtepi32_ps(_mm_unpackhi_epi16(v, z));
-
-                u0 = _mm_add_ps(_mm_mul_ps(u0, a4), _mm_mul_ps(v0, b4));
-                u1 = _mm_add_ps(_mm_mul_ps(u1, a4), _mm_mul_ps(v1, b4));
-                u0 = _mm_add_ps(u0, g4); u1 = _mm_add_ps(u1, g4);
-
-                u = _mm_packs_epi32(_mm_cvtps_epi32(u0), _mm_cvtps_epi32(u1));
-                u = _mm_packus_epi16(u, u);
-
-                _mm_storel_epi64((__m128i*)(dst + x), u);
-            }
-        }
-#elif CV_NEON
+#if CV_NEON
         float32x4_t g = vdupq_n_f32 (gamma);
 
         for( ; x <= width - 8; x += 8 )

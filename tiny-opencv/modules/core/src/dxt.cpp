@@ -40,9 +40,6 @@
 //M*/
 
 #include "precomp.hpp"
-#include "opencv2/core/opencl/runtime/opencl_clamdfft.hpp"
-#include "opencv2/core/opencl/runtime/opencl_core.hpp"
-#include "opencl_kernels_core.hpp"
 #include <map>
 
 namespace cv
@@ -3535,9 +3532,6 @@ void cv::mulSpectrums( InputArray _srcA, InputArray _srcB,
                        OutputArray _dst, int flags, bool conjB )
 {
     CV_INSTRUMENT_REGION()
-
-    CV_OCL_RUN(_dst.isUMat() && _srcA.dims() <= 2 && _srcB.dims() <= 2,
-            ocl_mulSpectrums(_srcA, _srcB, _dst, flags, conjB))
 
     Mat srcA = _srcA.getMat(), srcB = _srcB.getMat();
     int depth = srcA.depth(), cn = srcA.channels(), type = srcA.type();

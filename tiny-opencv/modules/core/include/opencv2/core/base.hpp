@@ -645,38 +645,6 @@ template<typename _Tp> class MatConstIterator_;
 template<typename _Tp> class SparseMatIterator_;
 template<typename _Tp> class SparseMatConstIterator_;
 
-namespace ogl
-{
-    class CV_EXPORTS Buffer;
-    class CV_EXPORTS Texture2D;
-    class CV_EXPORTS Arrays;
-}
-
-namespace cuda
-{
-    class CV_EXPORTS GpuMat;
-    class CV_EXPORTS HostMem;
-    class CV_EXPORTS Stream;
-    class CV_EXPORTS Event;
-}
-
-namespace cudev
-{
-    template <typename _Tp> class GpuMat_;
-}
-
-namespace ipp
-{
-CV_EXPORTS int getIppFeatures();
-CV_EXPORTS void setIppStatus(int status, const char * const funcname = NULL, const char * const filename = NULL,
-                             int line = 0);
-CV_EXPORTS int getIppStatus();
-CV_EXPORTS String getIppErrorLocation();
-CV_EXPORTS bool useIPP();
-CV_EXPORTS void setUseIPP(bool flag);
-
-} // ipp
-
 //! @endcond
 
 //! @} core_utils

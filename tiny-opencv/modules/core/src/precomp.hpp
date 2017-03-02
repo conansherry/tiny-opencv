@@ -48,15 +48,6 @@
 
 #include "opencv2/core/utility.hpp"
 #include "opencv2/core/core_c.h"
-#include "opencv2/core/cuda.hpp"
-#include "opencv2/core/opengl.hpp"
-#include "opencv2/core/va_intel.hpp"
-
-#include "opencv2/core/private.hpp"
-#include "opencv2/core/private.cuda.hpp"
-#ifdef HAVE_OPENCL
-#include "opencv2/core/ocl.hpp"
-#endif
 
 #include <assert.h>
 #include <ctype.h>
@@ -82,17 +73,14 @@
 
 #include "opencv2/core/hal/hal.hpp"
 #include "opencv2/core/hal/intrin.hpp"
-#include "opencv2/core/sse_utils.hpp"
 #include "opencv2/core/neon_utils.hpp"
+
+#include "opencv2/core/private.hpp"
 
 #include "arithm_core.hpp"
 #include "hal_replacement.hpp"
 
-#ifdef HAVE_TEGRA_OPTIMIZATION
-#include "opencv2/core/core_tegra.hpp"
-#else
 #define GET_OPTIMIZED(func) (func)
-#endif
 
 namespace cv
 {
@@ -257,32 +245,8 @@ struct ImplCollector
 
 struct CoreTLSData
 {
-    CoreTLSData() :
-//#ifdef HAVE_OPENCL
-        device(0), useOpenCL(-1),
-//#endif
-        useIPP(-1)
-#ifdef HAVE_TEGRA_OPTIMIZATION
-        ,useTegra(-1)
-#endif
-#ifdef HAVE_OPENVX
-        ,useOpenVX(-1)
-#endif
-    {}
-
+    CoreTLSData() {}
     RNG rng;
-//#ifdef HAVE_OPENCL
-    int device;
-    ocl::Queue oclQueue;
-    int useOpenCL; // 1 - use, 0 - do not use, -1 - auto/not initialized
-//#endif
-    int useIPP; // 1 - use, 0 - do not use, -1 - auto/not initialized
-#ifdef HAVE_TEGRA_OPTIMIZATION
-    int useTegra; // 1 - use, 0 - do not use, -1 - auto/not initialized
-#endif
-#ifdef HAVE_OPENVX
-    int useOpenVX; // 1 - use, 0 - do not use, -1 - auto/not initialized
-#endif
 };
 
 TLSData<CoreTLSData>& getCoreTlsData();

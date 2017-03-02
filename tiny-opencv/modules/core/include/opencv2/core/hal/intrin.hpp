@@ -288,11 +288,7 @@ template <typename T> struct V_SIMD128Traits
 #   undef CV_NEON
 #endif
 
-#if CV_SSE2
-
-#include "opencv2/core/hal/intrin_sse.hpp"
-
-#elif CV_NEON
+#if CV_NEON
 
 #include "opencv2/core/hal/intrin_neon.hpp"
 

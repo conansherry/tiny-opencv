@@ -414,14 +414,6 @@ randn_0_1_32f( float* arr, int len, uint64* state )
 }
 
 
-double RNG::gaussian(double sigma)
-{
-    float temp;
-    randn_0_1_32f( &temp, 1, &state );
-    return temp*sigma;
-}
-
-
 template<typename T, typename PT> static void
 randnScale_( const float* src, T* dst, int len, int cn, const PT* mean, const PT* stddev, bool stdmtx )
 {

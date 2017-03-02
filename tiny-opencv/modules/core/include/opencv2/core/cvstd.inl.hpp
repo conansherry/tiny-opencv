@@ -140,28 +140,6 @@ String operator + (const std::string& lhs, const String& rhs)
     return s;
 }
 
-inline
-FileNode::operator std::string() const
-{
-    String value;
-    read(*this, value, value);
-    return value;
-}
-
-template<> inline
-void operator >> (const FileNode& n, std::string& value)
-{
-    String val;
-    read(n, val, val);
-    value = val;
-}
-
-template<> inline
-FileStorage& operator << (FileStorage& fs, const std::string& value)
-{
-    return fs << cv::String(value);
-}
-
 static inline
 std::ostream& operator << (std::ostream& os, const String& str)
 {

@@ -42,7 +42,6 @@
 //M*/
 
 #include "precomp.hpp"
-#include "opencl_kernels_core.hpp"
 #include <limits>
 #include <iostream>
 
@@ -149,9 +148,6 @@ void magnitude( InputArray src1, InputArray src2, OutputArray dst )
     int type = src1.type(), depth = src1.depth(), cn = src1.channels();
     CV_Assert( src1.size() == src2.size() && type == src2.type() && (depth == CV_32F || depth == CV_64F));
 
-    CV_OCL_RUN(dst.isUMat() && src1.dims() <= 2 && src2.dims() <= 2,
-               ocl_math_op(src1, src2, dst, OCL_OP_MAG))
-
     Mat X = src1.getMat(), Y = src2.getMat();
     dst.create(X.dims, X.size, X.type());
     Mat Mag = dst.getMat();
@@ -184,9 +180,6 @@ void phase( InputArray src1, InputArray src2, OutputArray dst, bool angleInDegre
 
     int type = src1.type(), depth = src1.depth(), cn = src1.channels();
     CV_Assert( src1.size() == src2.size() && type == src2.type() && (depth == CV_32F || depth == CV_64F));
-
-    CV_OCL_RUN(dst.isUMat() && src1.dims() <= 2 && src2.dims() <= 2,
-               ocl_math_op(src1, src2, dst, angleInDegrees ? OCL_OP_PHASE_DEGREES : OCL_OP_PHASE_RADIANS))
 
     Mat X = src1.getMat(), Y = src2.getMat();
     dst.create( X.dims, X.size, type );
@@ -221,55 +214,10 @@ void phase( InputArray src1, InputArray src2, OutputArray dst, bool angleInDegre
     }
 }
 
-#ifdef HAVE_OPENCL
-
-static bool ocl_cartToPolar( InputArray _src1, InputArray _src2,
-                             OutputArray _dst1, OutputArray _dst2, bool angleInDegrees )
-{
-    const ocl::Device & d = ocl::Device::getDefault();
-    int type = _src1.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type),
-            rowsPerWI = d.isIntel() ? 4 : 1;
-    bool doubleSupport = d.doubleFPConfig() > 0;
-
-    if ( !(_src1.dims() <= 2 && _src2.dims() <= 2 &&
-           (depth == CV_32F || depth == CV_64F) && type == _src2.type()) ||
-         (depth == CV_64F && !doubleSupport) )
-        return false;
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D BINARY_OP -D dstT=%s -D depth=%d -D rowsPerWI=%d -D OP_CTP_%s%s",
-                         ocl::typeToStr(CV_MAKE_TYPE(depth, 1)),
-                         depth, rowsPerWI, angleInDegrees ? "AD" : "AR",
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
-    if (k.empty())
-        return false;
-
-    UMat src1 = _src1.getUMat(), src2 = _src2.getUMat();
-    Size size = src1.size();
-    CV_Assert( size == src2.size() );
-
-    _dst1.create(size, type);
-    _dst2.create(size, type);
-    UMat dst1 = _dst1.getUMat(), dst2 = _dst2.getUMat();
-
-    k.args(ocl::KernelArg::ReadOnlyNoSize(src1),
-           ocl::KernelArg::ReadOnlyNoSize(src2),
-           ocl::KernelArg::WriteOnly(dst1, cn),
-           ocl::KernelArg::WriteOnlyNoSize(dst2));
-
-    size_t globalsize[2] = { (size_t)dst1.cols * cn, ((size_t)dst1.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 void cartToPolar( InputArray src1, InputArray src2,
                   OutputArray dst1, OutputArray dst2, bool angleInDegrees )
 {
     CV_INSTRUMENT_REGION()
-
-    CV_OCL_RUN(dst1.isUMat() && dst2.isUMat(),
-            ocl_cartToPolar(src1, src2, dst1, dst2, angleInDegrees))
 
     Mat X = src1.getMat(), Y = src2.getMat();
     int type = X.type(), depth = X.depth(), cn = X.channels();
@@ -373,69 +321,6 @@ static void SinCos_32f( const float *angle, float *sinval, float* cosval,
     else
         k1 = N/360.;
 
-#if CV_AVX2
-    if (USE_AVX2)
-    {
-        __m128d v_k1 = _mm_set1_pd(k1);
-        __m128d v_1 = _mm_set1_pd(1);
-        __m128i v_N1 = _mm_set1_epi32(N - 1);
-        __m128i v_N4 = _mm_set1_epi32(N >> 2);
-        __m128d v_sin_a0 = _mm_set1_pd(sin_a0);
-        __m128d v_sin_a2 = _mm_set1_pd(sin_a2);
-        __m128d v_cos_a0 = _mm_set1_pd(cos_a0);
-
-        for ( ; i <= len - 4; i += 4)
-        {
-            __m128 v_angle = _mm_loadu_ps(angle + i);
-
-            // 0-1
-            __m128d v_t = _mm_mul_pd(_mm_cvtps_pd(v_angle), v_k1);
-            __m128i v_it = _mm_cvtpd_epi32(v_t);
-            v_t = _mm_sub_pd(v_t, _mm_cvtepi32_pd(v_it));
-
-            __m128i v_sin_idx = _mm_and_si128(v_it, v_N1);
-            __m128i v_cos_idx = _mm_and_si128(_mm_sub_epi32(v_N4, v_sin_idx), v_N1);
-
-            __m128d v_t2 = _mm_mul_pd(v_t, v_t);
-            __m128d v_sin_b = _mm_mul_pd(_mm_add_pd(_mm_mul_pd(v_sin_a0, v_t2), v_sin_a2), v_t);
-            __m128d v_cos_b = _mm_add_pd(_mm_mul_pd(v_cos_a0, v_t2), v_1);
-
-            __m128d v_sin_a = _mm_i32gather_pd(sin_table, v_sin_idx, 8);
-            __m128d v_cos_a = _mm_i32gather_pd(sin_table, v_cos_idx, 8);
-
-            __m128d v_sin_val_0 = _mm_add_pd(_mm_mul_pd(v_sin_a, v_cos_b),
-                                             _mm_mul_pd(v_cos_a, v_sin_b));
-            __m128d v_cos_val_0 = _mm_sub_pd(_mm_mul_pd(v_cos_a, v_cos_b),
-                                             _mm_mul_pd(v_sin_a, v_sin_b));
-
-            // 2-3
-            v_t = _mm_mul_pd(_mm_cvtps_pd(_mm_castsi128_ps(_mm_srli_si128(_mm_castps_si128(v_angle), 8))), v_k1);
-            v_it = _mm_cvtpd_epi32(v_t);
-            v_t = _mm_sub_pd(v_t, _mm_cvtepi32_pd(v_it));
-
-            v_sin_idx = _mm_and_si128(v_it, v_N1);
-            v_cos_idx = _mm_and_si128(_mm_sub_epi32(v_N4, v_sin_idx), v_N1);
-
-            v_t2 = _mm_mul_pd(v_t, v_t);
-            v_sin_b = _mm_mul_pd(_mm_add_pd(_mm_mul_pd(v_sin_a0, v_t2), v_sin_a2), v_t);
-            v_cos_b = _mm_add_pd(_mm_mul_pd(v_cos_a0, v_t2), v_1);
-
-            v_sin_a = _mm_i32gather_pd(sin_table, v_sin_idx, 8);
-            v_cos_a = _mm_i32gather_pd(sin_table, v_cos_idx, 8);
-
-            __m128d v_sin_val_1 = _mm_add_pd(_mm_mul_pd(v_sin_a, v_cos_b),
-                                             _mm_mul_pd(v_cos_a, v_sin_b));
-            __m128d v_cos_val_1 = _mm_sub_pd(_mm_mul_pd(v_cos_a, v_cos_b),
-                                             _mm_mul_pd(v_sin_a, v_sin_b));
-
-            _mm_storeu_ps(sinval + i, _mm_movelh_ps(_mm_cvtpd_ps(v_sin_val_0),
-                                                    _mm_cvtpd_ps(v_sin_val_1)));
-            _mm_storeu_ps(cosval + i, _mm_movelh_ps(_mm_cvtpd_ps(v_cos_val_0),
-                                                    _mm_cvtpd_ps(v_cos_val_1)));
-        }
-    }
-#endif
-
     for( ; i < len; i++ )
     {
         double t = angle[i]*k1;
@@ -458,45 +343,6 @@ static void SinCos_32f( const float *angle, float *sinval, float* cosval,
     }
 }
 
-
-#ifdef HAVE_OPENCL
-
-static bool ocl_polarToCart( InputArray _mag, InputArray _angle,
-                             OutputArray _dst1, OutputArray _dst2, bool angleInDegrees )
-{
-    const ocl::Device & d = ocl::Device::getDefault();
-    int type = _angle.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type),
-            rowsPerWI = d.isIntel() ? 4 : 1;
-    bool doubleSupport = d.doubleFPConfig() > 0;
-
-    if ( !doubleSupport && depth == CV_64F )
-        return false;
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D dstT=%s -D rowsPerWI=%d -D depth=%d -D BINARY_OP -D OP_PTC_%s%s",
-                         ocl::typeToStr(CV_MAKE_TYPE(depth, 1)), rowsPerWI,
-                         depth, angleInDegrees ? "AD" : "AR",
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
-    if (k.empty())
-        return false;
-
-    UMat mag = _mag.getUMat(), angle = _angle.getUMat();
-    Size size = angle.size();
-    CV_Assert(mag.size() == size);
-
-    _dst1.create(size, type);
-    _dst2.create(size, type);
-    UMat dst1 = _dst1.getUMat(), dst2 = _dst2.getUMat();
-
-    k.args(ocl::KernelArg::ReadOnlyNoSize(mag), ocl::KernelArg::ReadOnlyNoSize(angle),
-           ocl::KernelArg::WriteOnly(dst1, cn), ocl::KernelArg::WriteOnlyNoSize(dst2));
-
-    size_t globalsize[2] = { (size_t)dst1.cols * cn, ((size_t)dst1.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 void polarToCart( InputArray src1, InputArray src2,
                   OutputArray dst1, OutputArray dst2, bool angleInDegrees )
 {
@@ -505,37 +351,11 @@ void polarToCart( InputArray src1, InputArray src2,
     int type = src2.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
     CV_Assert((depth == CV_32F || depth == CV_64F) && (src1.empty() || src1.type() == type));
 
-    CV_OCL_RUN(!src1.empty() && src2.dims() <= 2 && dst1.isUMat() && dst2.isUMat(),
-               ocl_polarToCart(src1, src2, dst1, dst2, angleInDegrees))
-
     Mat Mag = src1.getMat(), Angle = src2.getMat();
     CV_Assert( Mag.empty() || Angle.size == Mag.size);
     dst1.create( Angle.dims, Angle.size, type );
     dst2.create( Angle.dims, Angle.size, type );
     Mat X = dst1.getMat(), Y = dst2.getMat();
-
-#if defined(HAVE_IPP)
-    CV_IPP_CHECK()
-    {
-        if (Mag.isContinuous() && Angle.isContinuous() && X.isContinuous() && Y.isContinuous() && !angleInDegrees)
-        {
-            typedef IppStatus (CV_STDCALL * IppsPolarToCart)(const void * pSrcMagn, const void * pSrcPhase,
-                                                             void * pDstRe, void * pDstIm, int len);
-            IppsPolarToCart ippsPolarToCart =
-            depth == CV_32F ? (IppsPolarToCart)ippsPolarToCart_32f :
-            depth == CV_64F ? (IppsPolarToCart)ippsPolarToCart_64f : 0;
-            CV_Assert(ippsPolarToCart != 0);
-
-            IppStatus status = CV_INSTRUMENT_FUN_IPP(ippsPolarToCart, Mag.ptr(), Angle.ptr(), X.ptr(), Y.ptr(), static_cast<int>(cn * X.total()));
-            if (status >= 0)
-            {
-                CV_IMPL_ADD(CV_IMPL_IPP);
-                return;
-            }
-            setIppErrorStatus();
-        }
-    }
-#endif
 
     const Mat* arrays[] = {&Mag, &Angle, &X, &Y, 0};
     uchar* ptrs[4];
@@ -635,9 +455,6 @@ void exp( InputArray _src, OutputArray _dst )
     int type = _src.type(), depth = _src.depth(), cn = _src.channels();
     CV_Assert( depth == CV_32F || depth == CV_64F );
 
-    CV_OCL_RUN(_dst.isUMat() && _src.dims() <= 2,
-               ocl_math_op(_src, noArray(), _dst, OCL_OP_EXP))
-
     Mat src = _src.getMat();
     _dst.create( src.dims, src.size, type );
     Mat dst = _dst.getMat();
@@ -667,9 +484,6 @@ void log( InputArray _src, OutputArray _dst )
 
     int type = _src.type(), depth = _src.depth(), cn = _src.channels();
     CV_Assert( depth == CV_32F || depth == CV_64F );
-
-    CV_OCL_RUN( _dst.isUMat() && _src.dims() <= 2,
-                ocl_math_op(_src, noArray(), _dst, OCL_OP_LOG))
 
     Mat src = _src.getMat();
     _dst.create( src.dims, src.size, type );
@@ -701,289 +515,6 @@ struct iPow_SIMD
         return 0;
     }
 };
-
-#if CV_SIMD128
-
-template <>
-struct iPow_SIMD<uchar, int>
-{
-    int operator() ( const uchar * src, uchar * dst, int len, int power )
-    {
-        int i = 0;
-        v_uint32x4 v_1 = v_setall_u32(1u);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_uint32x4 v_a1 = v_1, v_a2 = v_1;
-            v_uint16x8 v = v_load_expand(src + i);
-            v_uint32x4 v_b1, v_b2;
-            v_expand(v, v_b1, v_b2);
-            int p = power;
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v = v_pack(v_a1, v_a2);
-            v_pack_store(dst + i, v);
-        }
-
-        return i;
-    }
-};
-
-template <>
-struct iPow_SIMD<schar, int>
-{
-    int operator() ( const schar * src, schar * dst, int len, int power)
-    {
-        int i = 0;
-        v_int32x4 v_1 = v_setall_s32(1);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_int32x4 v_a1 = v_1, v_a2 = v_1;
-            v_int16x8 v = v_load_expand(src + i);
-            v_int32x4 v_b1, v_b2;
-            v_expand(v, v_b1, v_b2);
-            int p = power;
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v = v_pack(v_a1, v_a2);
-            v_pack_store(dst + i, v);
-        }
-
-        return i;
-    }
-};
-
-template <>
-struct iPow_SIMD<ushort, int>
-{
-    int operator() ( const ushort * src, ushort * dst, int len, int power)
-    {
-        int i = 0;
-        v_uint32x4 v_1 = v_setall_u32(1u);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_uint32x4 v_a1 = v_1, v_a2 = v_1;
-            v_uint16x8 v = v_load(src + i);
-            v_uint32x4 v_b1, v_b2;
-            v_expand(v, v_b1, v_b2);
-            int p = power;
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v = v_pack(v_a1, v_a2);
-            v_store(dst + i, v);
-        }
-
-        return i;
-    }
-};
-
-template <>
-struct iPow_SIMD<short, int>
-{
-    int operator() ( const short * src, short * dst, int len, int power)
-    {
-        int i = 0;
-        v_int32x4 v_1 = v_setall_s32(1);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_int32x4 v_a1 = v_1, v_a2 = v_1;
-            v_int16x8 v = v_load(src + i);
-            v_int32x4 v_b1, v_b2;
-            v_expand(v, v_b1, v_b2);
-            int p = power;
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v = v_pack(v_a1, v_a2);
-            v_store(dst + i, v);
-        }
-
-        return i;
-    }
-};
-
-template <>
-struct iPow_SIMD<int, int>
-{
-    int operator() ( const int * src, int * dst, int len, int power)
-    {
-        int i = 0;
-        v_int32x4 v_1 = v_setall_s32(1);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_int32x4 v_a1 = v_1, v_a2 = v_1;
-            v_int32x4 v_b1 = v_load(src + i), v_b2 = v_load(src + i + 4);
-            int p = power;
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v_store(dst + i, v_a1);
-            v_store(dst + i + 4, v_a2);
-        }
-
-        return i;
-    }
-};
-
-template <>
-struct iPow_SIMD<float, float>
-{
-    int operator() ( const float * src, float * dst, int len, int power)
-    {
-        int i = 0;
-        v_float32x4 v_1 = v_setall_f32(1.f);
-
-        for ( ; i <= len - 8; i += 8)
-        {
-            v_float32x4 v_a1 = v_1, v_a2 = v_1;
-            v_float32x4 v_b1 = v_load(src + i), v_b2 = v_load(src + i + 4);
-            int p = std::abs(power);
-            if( power < 0 )
-            {
-                v_b1 = v_1 / v_b1;
-                v_b2 = v_1 / v_b2;
-            }
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v_store(dst + i, v_a1);
-            v_store(dst + i + 4, v_a2);
-        }
-
-        return i;
-    }
-};
-
-#if CV_SIMD128_64F
-template <>
-struct iPow_SIMD<double, double>
-{
-    int operator() ( const double * src, double * dst, int len, int power)
-    {
-        int i = 0;
-        v_float64x2 v_1 = v_setall_f64(1.);
-
-        for ( ; i <= len - 4; i += 4)
-        {
-            v_float64x2 v_a1 = v_1, v_a2 = v_1;
-            v_float64x2 v_b1 = v_load(src + i), v_b2 = v_load(src + i + 2);
-            int p = std::abs(power);
-            if( power < 0 )
-            {
-                v_b1 = v_1 / v_b1;
-                v_b2 = v_1 / v_b2;
-            }
-
-            while( p > 1 )
-            {
-                if (p & 1)
-                {
-                    v_a1 *= v_b1;
-                    v_a2 *= v_b2;
-                }
-                v_b1 *= v_b1;
-                v_b2 *= v_b2;
-                p >>= 1;
-            }
-
-            v_a1 *= v_b1;
-            v_a2 *= v_b2;
-
-            v_store(dst + i, v_a1);
-            v_store(dst + i + 2, v_a2);
-        }
-
-        return i;
-    }
-};
-#endif
-
-#endif
 
 template<typename T, typename WT>
 static void
@@ -1097,76 +628,6 @@ static IPowFunc ipowTab[] =
     (IPowFunc)iPow32s, (IPowFunc)iPow32f, (IPowFunc)iPow64f, 0
 };
 
-#ifdef HAVE_OPENCL
-
-static bool ocl_pow(InputArray _src, double power, OutputArray _dst,
-                    bool is_ipower, int ipower)
-{
-    const ocl::Device & d = ocl::Device::getDefault();
-    int type = _src.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type),
-            rowsPerWI = d.isIntel() ? 4 : 1;
-    bool doubleSupport = d.doubleFPConfig() > 0;
-
-    _dst.createSameSize(_src, type);
-    if (is_ipower)
-    {
-        if (ipower == 0)
-        {
-            _dst.setTo(Scalar::all(1));
-            return true;
-        }
-        if (ipower == 1)
-        {
-            _src.copyTo(_dst);
-            return true;
-        }
-        if( ipower < 0 )
-        {
-            if( depth == CV_32F || depth == CV_64F )
-                is_ipower = false;
-            else
-                return false;
-        }
-    }
-
-    if (depth == CV_64F && !doubleSupport)
-        return false;
-
-    bool issqrt = std::abs(power - 0.5) < DBL_EPSILON;
-    const char * const op = issqrt ? "OP_SQRT" : is_ipower ? "OP_POWN" : "OP_POW";
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D dstT=%s -D depth=%d -D rowsPerWI=%d -D %s -D UNARY_OP%s",
-                         ocl::typeToStr(depth), depth,  rowsPerWI, op,
-                         doubleSupport ? " -D DOUBLE_SUPPORT" : ""));
-    if (k.empty())
-        return false;
-
-    UMat src = _src.getUMat();
-    _dst.create(src.size(), type);
-    UMat dst = _dst.getUMat();
-
-    ocl::KernelArg srcarg = ocl::KernelArg::ReadOnlyNoSize(src),
-            dstarg = ocl::KernelArg::WriteOnly(dst, cn);
-
-    if (issqrt)
-        k.args(srcarg, dstarg);
-    else if (is_ipower)
-        k.args(srcarg, dstarg, ipower);
-    else
-    {
-        if (depth == CV_32F)
-            k.args(srcarg, dstarg, (float)power);
-        else
-            k.args(srcarg, dstarg, power);
-    }
-
-    size_t globalsize[2] = { (size_t)dst.cols *  cn, ((size_t)dst.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 static void InvSqrt_32f(const float* src, float* dst, int n) { hal::invSqrt32f(src, dst, n); }
 static void InvSqrt_64f(const double* src, double* dst, int n) { hal::invSqrt64f(src, dst, n); }
 static void Sqrt_32f(const float* src, float* dst, int n) { hal::sqrt32f(src, dst, n); }
@@ -1179,15 +640,8 @@ void pow( InputArray _src, double power, OutputArray _dst )
     int type = _src.type(), depth = CV_MAT_DEPTH(type),
             cn = CV_MAT_CN(type), ipower = cvRound(power);
     bool is_ipower = fabs(ipower - power) < DBL_EPSILON;
-#ifdef HAVE_OPENCL
-    bool useOpenCL = _dst.isUMat() && _src.dims() <= 2;
-#endif
 
-    if( is_ipower
-#ifdef HAVE_OPENCL
-            && !(useOpenCL && ocl::Device::getDefault().isIntel() && depth != CV_64F)
-#endif
-      )
+    if( is_ipower)
     {
         switch( ipower )
         {
@@ -1205,8 +659,6 @@ void pow( InputArray _src, double power, OutputArray _dst )
     }
     else
         CV_Assert( depth == CV_32F || depth == CV_64F );
-
-    CV_OCL_RUN(useOpenCL, ocl_pow(_src, power, _dst, is_ipower, ipower))
 
     Mat src = _src.getMat();
     _dst.create( src.dims, src.size, type );
@@ -1260,24 +712,6 @@ void pow( InputArray _src, double power, OutputArray _dst )
             for( j = 0; j < len; j += blockSize )
             {
                 int bsz = std::min(len - j, blockSize);
-
-#if defined(HAVE_IPP)
-                CV_IPP_CHECK()
-                {
-                    IppStatus status = depth == CV_32F ?
-                    CV_INSTRUMENT_FUN_IPP(ippsPowx_32f_A21, (const float*)ptrs[0], (float)power, (float*)ptrs[1], bsz) :
-                    CV_INSTRUMENT_FUN_IPP(ippsPowx_64f_A50, (const double*)ptrs[0], (double)power, (double*)ptrs[1], bsz);
-
-                    if (status >= 0)
-                    {
-                        CV_IMPL_ADD(CV_IMPL_IPP);
-                        ptrs[0] += bsz*esz1;
-                        ptrs[1] += bsz*esz1;
-                        continue;
-                    }
-                    setIppErrorStatus();
-                }
-#endif
 
                 if( depth == CV_32F )
                 {
@@ -1544,37 +978,11 @@ bool checkRange(InputArray _src, bool quiet, Point* pt, double minVal, double ma
     return true;
 }
 
-#ifdef HAVE_OPENCL
-
-static bool ocl_patchNaNs( InputOutputArray _a, float value )
-{
-    int rowsPerWI = ocl::Device::getDefault().isIntel() ? 4 : 1;
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                     format("-D UNARY_OP -D OP_PATCH_NANS -D dstT=float -D rowsPerWI=%d",
-                            rowsPerWI));
-    if (k.empty())
-        return false;
-
-    UMat a = _a.getUMat();
-    int cn = a.channels();
-
-    k.args(ocl::KernelArg::ReadOnlyNoSize(a),
-           ocl::KernelArg::WriteOnly(a, cn), (float)value);
-
-    size_t globalsize[2] = { (size_t)a.cols * cn, ((size_t)a.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, NULL, false);
-}
-
-#endif
-
 void patchNaNs( InputOutputArray _a, double _val )
 {
     CV_INSTRUMENT_REGION()
 
     CV_Assert( _a.depth() == CV_32F );
-
-    CV_OCL_RUN(_a.isUMat() && _a.dims() <= 2,
-               ocl_patchNaNs(_a, (float)_val))
 
     Mat a = _a.getMat();
     const Mat* arrays[] = {&a, 0};
@@ -1584,10 +992,7 @@ void patchNaNs( InputOutputArray _a, double _val )
     Cv32suf val;
     val.f = (float)_val;
 
-#if CV_SSE2
-    __m128i v_mask1 = _mm_set1_epi32(0x7fffffff), v_mask2 = _mm_set1_epi32(0x7f800000);
-    __m128i v_val = _mm_set1_epi32(val.i);
-#elif CV_NEON
+#if CV_NEON
     int32x4_t v_mask1 = vdupq_n_s32(0x7fffffff), v_mask2 = vdupq_n_s32(0x7f800000),
         v_val = vdupq_n_s32(val.i);
 #endif
@@ -1597,18 +1002,7 @@ void patchNaNs( InputOutputArray _a, double _val )
         int* tptr = ptrs[0];
         size_t j = 0;
 
-#if CV_SSE2
-        if (USE_SSE2)
-        {
-            for ( ; j + 4 <= len; j += 4)
-            {
-                __m128i v_src = _mm_loadu_si128((__m128i const *)(tptr + j));
-                __m128i v_cmp_mask = _mm_cmplt_epi32(v_mask2, _mm_and_si128(v_src, v_mask1));
-                __m128i v_res = _mm_or_si128(_mm_andnot_si128(v_cmp_mask, v_src), _mm_and_si128(v_cmp_mask, v_val));
-                _mm_storeu_si128((__m128i *)(tptr + j), v_res);
-            }
-        }
-#elif CV_NEON
+#if CV_NEON
         for ( ; j + 4 <= len; j += 4)
         {
             int32x4_t v_src = vld1q_s32(tptr + j);
