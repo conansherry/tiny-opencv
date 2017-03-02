@@ -1487,14 +1487,6 @@ cvConvertScale( const void* srcarr, void* dstarr,
     src.convertTo(dst, dst.type(), scale, shift);
 }
 
-CV_IMPL void cvLUT( const void* srcarr, void* dstarr, const void* lutarr )
-{
-    cv::Mat src = cv::cvarrToMat(srcarr), dst = cv::cvarrToMat(dstarr), lut = cv::cvarrToMat(lutarr);
-
-    CV_Assert( dst.size() == src.size() && dst.type() == CV_MAKETYPE(lut.depth(), src.channels()) );
-    cv::LUT( src, lut, dst );
-}
-
 CV_IMPL void cvNormalize( const CvArr* srcarr, CvArr* dstarr,
                           double a, double b, int norm_type, const CvArr* maskarr )
 {

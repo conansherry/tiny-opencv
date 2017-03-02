@@ -326,6 +326,41 @@ SVD::backSubst( const Matx<_Tp, nm, 1>& w, const Matx<_Tp, m, nm>& u,
     CV_Assert(_dst.data == (uchar*)&dst.val[0]);
 }
 
+
+
+/////////////////////////////////// Multiply-with-Carry RNG ///////////////////////////////////
+
+inline RNG::RNG()              { state = 0xffffffff; }
+inline RNG::RNG(uint64 _state) { state = _state ? _state : 0xffffffff; }
+
+inline RNG::operator uchar()    { return (uchar)next(); }
+inline RNG::operator schar()    { return (schar)next(); }
+inline RNG::operator ushort()   { return (ushort)next(); }
+inline RNG::operator short()    { return (short)next(); }
+inline RNG::operator int()      { return (int)next(); }
+inline RNG::operator unsigned() { return next(); }
+inline RNG::operator float()    { return next()*2.3283064365386962890625e-10f; }
+inline RNG::operator double()   { unsigned t = next(); return (((uint64)t << 32) | next()) * 5.4210108624275221700372640043497e-20; }
+
+inline unsigned RNG::operator ()(unsigned N) { return (unsigned)uniform(0,N); }
+inline unsigned RNG::operator ()()           { return next(); }
+
+inline int    RNG::uniform(int a, int b)       { return a == b ? a : (int)(next() % (b - a) + a); }
+inline float  RNG::uniform(float a, float b)   { return ((float)*this)*(b - a) + a; }
+inline double RNG::uniform(double a, double b) { return ((double)*this)*(b - a) + a; }
+
+inline unsigned RNG::next()
+{
+    state = (uint64)(unsigned)state* /*CV_RNG_COEFF*/ 4164903690U + (unsigned)(state >> 32);
+    return (unsigned)state;
+}
+
+//! returns the next unifomly-distributed random number of the specified type
+template<typename _Tp> static inline _Tp randu()
+{
+  return (_Tp)theRNG();
+}
+
 ///////////////////////////////// Formatted string generation /////////////////////////////////
 
 CV_EXPORTS String format( const char* fmt, ... );

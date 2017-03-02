@@ -3219,9 +3219,6 @@ template<> void DefaultDeleter<CvSparseMat>::operator ()(CvSparseMat* obj) const
 template<> void DefaultDeleter<CvMemStorage>::operator ()(CvMemStorage* obj) const
 { cvReleaseMemStorage(&obj); }
 
-template<> void DefaultDeleter<CvFileStorage>::operator ()(CvFileStorage* obj) const
-{ cvReleaseFileStorage(&obj); }
-
 }
 
 /* End of file. */
