@@ -462,6 +462,20 @@ CV_EXPORTS_W bool useOptimized();
 
 static inline size_t getElemSize(int type) { return CV_ELEM_SIZE(type); }
 
+/////////////////////////////// Parallel Primitives //////////////////////////////////
+
+/** @brief Base class for parallel data processors
+*/
+class CV_EXPORTS ParallelLoopBody
+{
+public:
+    virtual ~ParallelLoopBody();
+    virtual void operator() (const Range& range) const = 0;
+};
+
+/** @brief Parallel data processor
+*/
+CV_EXPORTS void parallel_for_(const Range& range, const ParallelLoopBody& body, double nstripes=-1.);
 /////////////////////////// Synchronization Primitives ///////////////////////////////
 
 class CV_EXPORTS Mutex

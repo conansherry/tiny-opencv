@@ -44,6 +44,11 @@
 #include "precomp.hpp"
 #include "opencv2/core/hal/intrin.hpp"
 
+#ifdef __APPLE__
+#undef CV_NEON
+#define CV_NEON 0
+#endif
+
 #define CV_SPLIT_MERGE_MAX_BLOCK_SIZE(cn) ((INT_MAX/4)/cn) // HAL implementation accepts 'int' len, so INT_MAX doesn't work here
 
 /****************************************************************************************\
