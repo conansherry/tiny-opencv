@@ -189,14 +189,20 @@ namespace
 #endif
     };
 
-#if defined WINRT || defined HAVE_CONCURRENCY
+#if defined HAVE_GCD
+    typedef ParallelLoopBodyWrapper ProxyLoopBody;
+    static void block_function(void* context, size_t index)
+    {
+        ProxyLoopBody* ptr_body = static_cast<ProxyLoopBody*>(context);
+        (*ptr_body)(cv::Range((int)index, (int)index + 1));
+    }
+#elif defined WINRT || defined HAVE_CONCURRENCY
     class ProxyLoopBody : public ParallelLoopBodyWrapper
     {
     public:
         ProxyLoopBody(const cv::ParallelLoopBody& _body, const cv::Range& _r, double _nstripes)
         : ParallelLoopBodyWrapper(_body, _r, _nstripes)
         {}
-
         void operator ()(int i) const
         {
             this->ParallelLoopBodyWrapper::operator()(cv::Range(i, i + 1));
