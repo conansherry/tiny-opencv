@@ -2692,6 +2692,161 @@ String& operator << (String& out, const Mat& mtx)
     return out << Formatter::get()->format(mtx);
 }
 
+//////////////////////////////////////// Algorithm ////////////////////////////////////
+
+class CV_EXPORTS Algorithm;
+
+template<typename _Tp> struct ParamType {};
+
+
+/** @brief This is a base class for all more or less complex algorithms in OpenCV
+
+especially for classes of algorithms, for which there can be multiple implementations. The examples
+are stereo correspondence (for which there are algorithms like block matching, semi-global block
+matching, graph-cut etc.), background subtraction (which can be done using mixture-of-gaussians
+models, codebook-based algorithm etc.), optical flow (block matching, Lucas-Kanade, Horn-Schunck
+etc.).
+
+Here is example of SIFT use in your application via Algorithm interface:
+@code
+    #include "opencv2/opencv.hpp"
+    #include "opencv2/xfeatures2d.hpp"
+    using namespace cv::xfeatures2d;
+
+    Ptr<Feature2D> sift = SIFT::create();
+    FileStorage fs("sift_params.xml", FileStorage::READ);
+    if( fs.isOpened() ) // if we have file with parameters, read them
+    {
+        sift->read(fs["sift_params"]);
+        fs.release();
+    }
+    else // else modify the parameters and store them; user can later edit the file to use different parameters
+    {
+        sift->setContrastThreshold(0.01f); // lower the contrast threshold, compared to the default value
+        {
+            WriteStructContext ws(fs, "sift_params", CV_NODE_MAP);
+            sift->write(fs);
+        }
+    }
+    Mat image = imread("myimage.png", 0), descriptors;
+    vector<KeyPoint> keypoints;
+    sift->detectAndCompute(image, noArray(), keypoints, descriptors);
+@endcode
+ */
+class CV_EXPORTS_W Algorithm
+{
+public:
+    Algorithm();
+    virtual ~Algorithm();
+
+    /** @brief Clears the algorithm state
+    */
+    CV_WRAP virtual void clear() {}
+
+    /** @brief Returns true if the Algorithm is empty (e.g. in the very beginning or after unsuccessful read
+     */
+    virtual bool empty() const { return false; }
+
+    /** Returns the algorithm string identifier.
+     This string is used as top level xml/yml node tag when the object is saved to a file or string. */
+    CV_WRAP virtual String getDefaultName() const;
+};
+
+struct Param {
+    enum { INT=0, BOOLEAN=1, REAL=2, STRING=3, MAT=4, MAT_VECTOR=5, ALGORITHM=6, FLOAT=7,
+           UNSIGNED_INT=8, UINT64=9, UCHAR=11 };
+};
+
+
+
+template<> struct ParamType<bool>
+{
+    typedef bool const_param_type;
+    typedef bool member_type;
+
+    enum { type = Param::BOOLEAN };
+};
+
+template<> struct ParamType<int>
+{
+    typedef int const_param_type;
+    typedef int member_type;
+
+    enum { type = Param::INT };
+};
+
+template<> struct ParamType<double>
+{
+    typedef double const_param_type;
+    typedef double member_type;
+
+    enum { type = Param::REAL };
+};
+
+template<> struct ParamType<String>
+{
+    typedef const String& const_param_type;
+    typedef String member_type;
+
+    enum { type = Param::STRING };
+};
+
+template<> struct ParamType<Mat>
+{
+    typedef const Mat& const_param_type;
+    typedef Mat member_type;
+
+    enum { type = Param::MAT };
+};
+
+template<> struct ParamType<std::vector<Mat> >
+{
+    typedef const std::vector<Mat>& const_param_type;
+    typedef std::vector<Mat> member_type;
+
+    enum { type = Param::MAT_VECTOR };
+};
+
+template<> struct ParamType<Algorithm>
+{
+    typedef const Ptr<Algorithm>& const_param_type;
+    typedef Ptr<Algorithm> member_type;
+
+    enum { type = Param::ALGORITHM };
+};
+
+template<> struct ParamType<float>
+{
+    typedef float const_param_type;
+    typedef float member_type;
+
+    enum { type = Param::FLOAT };
+};
+
+template<> struct ParamType<unsigned>
+{
+    typedef unsigned const_param_type;
+    typedef unsigned member_type;
+
+    enum { type = Param::UNSIGNED_INT };
+};
+
+template<> struct ParamType<uint64>
+{
+    typedef uint64 const_param_type;
+    typedef uint64 member_type;
+
+    enum { type = Param::UINT64 };
+};
+
+template<> struct ParamType<uchar>
+{
+    typedef uchar const_param_type;
+    typedef uchar member_type;
+
+    enum { type = Param::UCHAR };
+};
+
 //! @} core_basic
 
 } //namespace cv
