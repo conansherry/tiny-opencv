@@ -722,7 +722,6 @@ inline int hal_ni_gemm64fc(const double* src1, size_t src1_step, const double* s
 #endif
 
 #include "hal_internal.hpp"
-#include "custom_hal.hpp"
 
 //! @cond IGNORED
 #define CALL_HAL_RET(name, fun, retval, ...) \

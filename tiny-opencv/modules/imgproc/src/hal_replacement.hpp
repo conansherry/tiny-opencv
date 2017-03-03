@@ -623,8 +623,6 @@ inline int hal_ni_integral(int depth, int sdepth, int sqdepth, const uchar * src
 #  pragma warning( pop )
 #endif
 
-#include "custom_hal.hpp"
-
 //! @cond IGNORED
 #define CALL_HAL_RET(name, fun, retval, ...) \
     int res = fun(__VA_ARGS__, &retval); \
