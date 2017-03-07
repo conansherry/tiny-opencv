@@ -124,13 +124,6 @@ namespace cv
         template <typename Y> Affine3<Y> cast() const;
 
         Mat4 matrix;
-
-#if defined EIGEN_WORLD_VERSION && defined EIGEN_GEOMETRY_MODULE_H
-        Affine3(const Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)>& affine);
-        Affine3(const Eigen::Transform<T, 3, Eigen::Affine>& affine);
-        operator Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)>() const;
-        operator Eigen::Transform<T, 3, Eigen::Affine>() const;
-#endif
     };
 
     template<typename T> static
@@ -475,40 +468,6 @@ cv::Vec3d cv::operator*(const cv::Affine3d& affine, const cv::Vec3d& v)
     r.val[2] = m.val[8] * v[0] + m.val[9] * v[1] + m.val[10] * v[2] + m.val[11];
     return r;
 }
-
-
-
-#if defined EIGEN_WORLD_VERSION && defined EIGEN_GEOMETRY_MODULE_H
-
-template<typename T> inline
-cv::Affine3<T>::Affine3(const Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)>& affine)
-{
-    cv::Mat(4, 4, cv::DataType<T>::type, affine.matrix().data()).copyTo(matrix);
-}
-
-template<typename T> inline
-cv::Affine3<T>::Affine3(const Eigen::Transform<T, 3, Eigen::Affine>& affine)
-{
-    Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)> a = affine;
-    cv::Mat(4, 4, cv::DataType<T>::type, a.matrix().data()).copyTo(matrix);
-}
-
-template<typename T> inline
-cv::Affine3<T>::operator Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)>() const
-{
-    Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)> r;
-    cv::Mat hdr(4, 4, cv::DataType<T>::type, r.matrix().data());
-    cv::Mat(matrix, false).copyTo(hdr);
-    return r;
-}
-
-template<typename T> inline
-cv::Affine3<T>::operator Eigen::Transform<T, 3, Eigen::Affine>() const
-{
-    return this->operator Eigen::Transform<T, 3, Eigen::Affine, (Eigen::RowMajor)>();
-}
-
-#endif /* defined EIGEN_WORLD_VERSION && defined EIGEN_GEOMETRY_MODULE_H */
 
 //! @endcond
 

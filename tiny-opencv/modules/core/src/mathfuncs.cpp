@@ -50,50 +50,6 @@ namespace cv
 
 typedef void (*MathFunc)(const void* src, void* dst, int len);
 
-#ifdef HAVE_OPENCL
-
-enum { OCL_OP_LOG=0, OCL_OP_EXP=1, OCL_OP_MAG=2, OCL_OP_PHASE_DEGREES=3, OCL_OP_PHASE_RADIANS=4 };
-
-static const char* oclop2str[] = { "OP_LOG", "OP_EXP", "OP_MAG", "OP_PHASE_DEGREES", "OP_PHASE_RADIANS", 0 };
-
-static bool ocl_math_op(InputArray _src1, InputArray _src2, OutputArray _dst, int oclop)
-{
-    int type = _src1.type(), depth = CV_MAT_DEPTH(type), cn = CV_MAT_CN(type);
-    int kercn = oclop == OCL_OP_PHASE_DEGREES ||
-            oclop == OCL_OP_PHASE_RADIANS ? 1 : ocl::predictOptimalVectorWidth(_src1, _src2, _dst);
-
-    const ocl::Device d = ocl::Device::getDefault();
-    bool double_support = d.doubleFPConfig() > 0;
-    if (!double_support && depth == CV_64F)
-        return false;
-    int rowsPerWI = d.isIntel() ? 4 : 1;
-
-    ocl::Kernel k("KF", ocl::core::arithm_oclsrc,
-                  format("-D %s -D %s -D dstT=%s -D rowsPerWI=%d%s", _src2.empty() ? "UNARY_OP" : "BINARY_OP",
-                         oclop2str[oclop], ocl::typeToStr(CV_MAKE_TYPE(depth, kercn)), rowsPerWI,
-                         double_support ? " -D DOUBLE_SUPPORT" : ""));
-    if (k.empty())
-        return false;
-
-    UMat src1 = _src1.getUMat(), src2 = _src2.getUMat();
-    _dst.create(src1.size(), type);
-    UMat dst = _dst.getUMat();
-
-    ocl::KernelArg src1arg = ocl::KernelArg::ReadOnlyNoSize(src1),
-            src2arg = ocl::KernelArg::ReadOnlyNoSize(src2),
-            dstarg = ocl::KernelArg::WriteOnly(dst, cn, kercn);
-
-    if (src2.empty())
-        k.args(src1arg, dstarg);
-    else
-        k.args(src1arg, src2arg, dstarg);
-
-    size_t globalsize[] = { (size_t)src1.cols * cn / kercn, ((size_t)src1.rows + rowsPerWI - 1) / rowsPerWI };
-    return k.run(2, globalsize, 0, false);
-}
-
-#endif
-
 /* ************************************************************************** *\
    Fast cube root by Ken Turkowski
    (http://www.worldserver.com/turk/computergraphics/papers.html)
@@ -393,16 +349,6 @@ void polarToCart( InputArray src1, InputArray src2,
                         float32x4_t v_m = vld1q_f32(mag + k);
                         vst1q_f32(x + k, vmulq_f32(vld1q_f32(x + k), v_m));
                         vst1q_f32(y + k, vmulq_f32(vld1q_f32(y + k), v_m));
-                    }
-                    #elif CV_SSE2
-                    if (USE_SSE2)
-                    {
-                        for( ; k <= len - 4; k += 4 )
-                        {
-                            __m128 v_m = _mm_loadu_ps(mag + k);
-                            _mm_storeu_ps(x + k, _mm_mul_ps(_mm_loadu_ps(x + k), v_m));
-                            _mm_storeu_ps(y + k, _mm_mul_ps(_mm_loadu_ps(y + k), v_m));
-                        }
                     }
                     #endif
 

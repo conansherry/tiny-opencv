@@ -150,7 +150,7 @@ template<typename T> struct OpNot
 template<typename T, class Op, class VOp>
 void vBinOp(const T* src1, size_t step1, const T* src2, size_t step2, T* dst, size_t step, int width, int height)
 {
-#if CV_SSE2 || CV_NEON
+#if CV_NEON
     VOp vop;
 #endif
     Op op;
@@ -160,51 +160,6 @@ void vBinOp(const T* src1, size_t step1, const T* src2, size_t step2, T* dst, si
                         dst = (T *)((uchar *)dst + step) )
     {
         int x = 0;
-
-#if CV_NEON || CV_SSE2
-#if CV_AVX2
-        if( USE_AVX2 )
-        {
-            for( ; x <= width - 32/(int)sizeof(T); x += 32/sizeof(T) )
-            {
-                typename VLoadStore256<T>::reg_type r0 = VLoadStore256<T>::load(src1 + x);
-                r0 = vop(r0, VLoadStore256<T>::load(src2 + x));
-                VLoadStore256<T>::store(dst + x, r0);
-            }
-        }
-#else
-#if CV_SSE2
-        if( USE_SSE2 )
-        {
-#endif // CV_SSE2
-            for( ; x <= width - 32/(int)sizeof(T); x += 32/sizeof(T) )
-            {
-                typename VLoadStore128<T>::reg_type r0 = VLoadStore128<T>::load(src1 + x               );
-                typename VLoadStore128<T>::reg_type r1 = VLoadStore128<T>::load(src1 + x + 16/sizeof(T));
-                r0 = vop(r0, VLoadStore128<T>::load(src2 + x               ));
-                r1 = vop(r1, VLoadStore128<T>::load(src2 + x + 16/sizeof(T)));
-                VLoadStore128<T>::store(dst + x               , r0);
-                VLoadStore128<T>::store(dst + x + 16/sizeof(T), r1);
-            }
-#if CV_SSE2
-        }
-#endif // CV_SSE2
-#endif // CV_AVX2
-#endif // CV_NEON || CV_SSE2
-
-#if CV_AVX2
-        // nothing
-#elif CV_SSE2
-        if( USE_SSE2 )
-        {
-            for( ; x <= width - 8/(int)sizeof(T); x += 8/sizeof(T) )
-            {
-                typename VLoadStore64<T>::reg_type r = VLoadStore64<T>::load(src1 + x);
-                r = vop(r, VLoadStore64<T>::load(src2 + x));
-                VLoadStore64<T>::store(dst + x, r);
-            }
-        }
-#endif
 
 #if CV_ENABLE_UNROLLED
         for( ; x <= width - 4; x += 4 )
@@ -227,7 +182,7 @@ template<typename T, class Op, class Op32>
 void vBinOp32(const T* src1, size_t step1, const T* src2, size_t step2,
               T* dst, size_t step, int width, int height)
 {
-#if CV_SSE2 || CV_NEON
+#if CV_NEON
     Op32 op32;
 #endif
     Op op;
@@ -237,68 +192,6 @@ void vBinOp32(const T* src1, size_t step1, const T* src2, size_t step2,
                         dst = (T *)((uchar *)dst + step) )
     {
         int x = 0;
-
-#if CV_AVX2
-        if( USE_AVX2 )
-        {
-            if( (((size_t)src1|(size_t)src2|(size_t)dst)&31) == 0 )
-            {
-                for( ; x <= width - 8; x += 8 )
-                {
-                    typename VLoadStore256Aligned<T>::reg_type r0 = VLoadStore256Aligned<T>::load(src1 + x);
-                    r0 = op32(r0, VLoadStore256Aligned<T>::load(src2 + x));
-                    VLoadStore256Aligned<T>::store(dst + x, r0);
-                }
-            }
-        }
-#elif CV_SSE2
-        if( USE_SSE2 )
-        {
-            if( (((size_t)src1|(size_t)src2|(size_t)dst)&15) == 0 )
-            {
-                for( ; x <= width - 8; x += 8 )
-                {
-                    typename VLoadStore128Aligned<T>::reg_type r0 = VLoadStore128Aligned<T>::load(src1 + x    );
-                    typename VLoadStore128Aligned<T>::reg_type r1 = VLoadStore128Aligned<T>::load(src1 + x + 4);
-                    r0 = op32(r0, VLoadStore128Aligned<T>::load(src2 + x    ));
-                    r1 = op32(r1, VLoadStore128Aligned<T>::load(src2 + x + 4));
-                    VLoadStore128Aligned<T>::store(dst + x    , r0);
-                    VLoadStore128Aligned<T>::store(dst + x + 4, r1);
-                }
-            }
-        }
-#endif // CV_AVX2
-
-#if CV_NEON || CV_SSE2
-#if CV_AVX2
-        if( USE_AVX2 )
-        {
-            for( ; x <= width - 8; x += 8 )
-            {
-                typename VLoadStore256<T>::reg_type r0 = VLoadStore256<T>::load(src1 + x);
-                r0 = op32(r0, VLoadStore256<T>::load(src2 + x));
-                VLoadStore256<T>::store(dst + x, r0);
-            }
-        }
-#else
-#if CV_SSE2
-        if( USE_SSE2 )
-        {
-#endif // CV_SSE2
-            for( ; x <= width - 8; x += 8 )
-            {
-                typename VLoadStore128<T>::reg_type r0 = VLoadStore128<T>::load(src1 + x    );
-                typename VLoadStore128<T>::reg_type r1 = VLoadStore128<T>::load(src1 + x + 4);
-                r0 = op32(r0, VLoadStore128<T>::load(src2 + x    ));
-                r1 = op32(r1, VLoadStore128<T>::load(src2 + x + 4));
-                VLoadStore128<T>::store(dst + x    , r0);
-                VLoadStore128<T>::store(dst + x + 4, r1);
-            }
-#if CV_SSE2
-        }
-#endif // CV_SSE2
-#endif // CV_AVX2
-#endif // CV_NEON || CV_SSE2
 
 #if CV_ENABLE_UNROLLED
         for( ; x <= width - 4; x += 4 )
@@ -322,9 +215,6 @@ template<typename T, class Op, class Op64>
 void vBinOp64(const T* src1, size_t step1, const T* src2, size_t step2,
                T* dst, size_t step, int width, int height)
 {
-#if CV_SSE2
-    Op64 op64;
-#endif
     Op op;
 
     for( ; height--; src1 = (const T *)((const uchar *)src1 + step1),
@@ -332,37 +222,6 @@ void vBinOp64(const T* src1, size_t step1, const T* src2, size_t step2,
                         dst = (T *)((uchar *)dst + step) )
     {
         int x = 0;
-
-#if CV_AVX2
-        if( USE_AVX2 )
-        {
-            if( (((size_t)src1|(size_t)src2|(size_t)dst)&31) == 0 )
-            {
-                for( ; x <= width - 4; x += 4 )
-                {
-                    typename VLoadStore256Aligned<T>::reg_type r0 = VLoadStore256Aligned<T>::load(src1 + x);
-                    r0 = op64(r0, VLoadStore256Aligned<T>::load(src2 + x));
-                    VLoadStore256Aligned<T>::store(dst + x, r0);
-                }
-            }
-        }
-#elif CV_SSE2
-        if( USE_SSE2 )
-        {
-            if( (((size_t)src1|(size_t)src2|(size_t)dst)&15) == 0 )
-            {
-                for( ; x <= width - 4; x += 4 )
-                {
-                    typename VLoadStore128Aligned<T>::reg_type r0 = VLoadStore128Aligned<T>::load(src1 + x    );
-                    typename VLoadStore128Aligned<T>::reg_type r1 = VLoadStore128Aligned<T>::load(src1 + x + 2);
-                    r0 = op64(r0, VLoadStore128Aligned<T>::load(src2 + x    ));
-                    r1 = op64(r1, VLoadStore128Aligned<T>::load(src2 + x + 2));
-                    VLoadStore128Aligned<T>::store(dst + x    , r0);
-                    VLoadStore128Aligned<T>::store(dst + x + 2, r1);
-                }
-            }
-        }
-#endif
 
         for( ; x <= width - 4; x += 4 )
         {
