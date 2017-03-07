@@ -864,12 +864,6 @@ void cv::cvtColor( InputArray _src, OutputArray _dst, int code, int dcn )
                               depth, scn, swapBlue(code));
             break;
 
-        case CV_BayerBG2GRAY: case CV_BayerGB2GRAY: case CV_BayerRG2GRAY: case CV_BayerGR2GRAY:
-        case CV_BayerBG2BGR: case CV_BayerGB2BGR: case CV_BayerRG2BGR: case CV_BayerGR2BGR:
-        case CV_BayerBG2BGR_VNG: case CV_BayerGB2BGR_VNG: case CV_BayerRG2BGR_VNG: case CV_BayerGR2BGR_VNG:
-        case CV_BayerBG2BGR_EA: case CV_BayerGB2BGR_EA: case CV_BayerRG2BGR_EA: case CV_BayerGR2BGR_EA:
-            demosaicing(src, _dst, code, dcn);
-            break;
         case CV_YUV2GRAY_420:
             {
                 if (dcn <= 0) dcn = 1;
@@ -884,6 +878,7 @@ void cv::cvtColor( InputArray _src, OutputArray _dst, int code, int dcn )
                 src(Range(0, dstSz.height), Range::all()).copyTo(dst);
             }
             break;
+
         case CV_YUV2GRAY_UYVY: case CV_YUV2GRAY_YUY2:
             {
                 if (dcn <= 0) dcn = 1;

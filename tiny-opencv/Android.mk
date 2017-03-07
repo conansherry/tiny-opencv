@@ -34,4 +34,4 @@ LOCAL_CFLAGS += -O3 -fPIC -Wall -Wno-unused -Wno-sign-compare -Wno-deprecated-de
 LOCAL_CPPFLAGS += -O3 -std=c++11 -mfloat-abi=softfp -mfpu=neon -D__OPENCV_BUILD=1 -Wmaybe-uninitialized
 LOCAL_LDLIBS += -llog -lz
 
-include $(BUILD_SHARED_LIBRARY)
+include $(BUILD_STATIC_LIBRARY)
